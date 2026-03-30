@@ -26,7 +26,7 @@ import { useState, useEffect } from 'react';
 import * as synthetic from '../data/synthetic';
 import { fetchPortfolio } from '../services/api';
 import {
-  ScatterChart, Scatter, XAxis, YAxis, Tooltip, ResponsiveContainer,
+  ScatterChart, Scatter, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
   PieChart, Pie, Cell, BarChart, Bar,
 } from 'recharts';
 import { Play, RotateCcw } from 'lucide-react';
@@ -37,6 +37,20 @@ const SECTOR_COLORS = {
   Consumer: '#3FB950',
   Financial: '#D29922',
   Healthcare: '#F85149',
+};
+
+const renderSectorLabel = ({ cx, cy, midAngle, outerRadius, name, value, fill }) => {
+  const RADIAN = Math.PI / 180;
+  const radius = outerRadius + 18;
+  const x = cx + radius * Math.cos(-midAngle * RADIAN);
+  const y = cy + radius * Math.sin(-midAngle * RADIAN);
+  const textAnchor = x > cx ? 'start' : 'end';
+
+  return (
+    <text x={x} y={y} fill={fill} textAnchor={textAnchor} dominantBaseline="central" fontSize={11}>
+      {`${name} ${value}%`}
+    </text>
+  );
 };
 
 export default function Portfolio() {
@@ -57,6 +71,32 @@ export default function Portfolio() {
   const optMetrics        = live?.optimizationMetrics ?? {};
 
   const lastRun = live ? new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—';
+  const stockScatter = individualStocks.map(s => ({
+    volatility: s.volatility,
+    return: s.return,
+    ticker: s.ticker,
+  }));
+  const currentPortfolioPoint = currentPortfolio?.volatility != null && currentPortfolio?.return != null
+    ? [currentPortfolio]
+    : [];
+
+  const allVolatility = [
+    ...efficientFrontier.map(p => p.volatility),
+    ...stockScatter.map(s => s.volatility),
+    ...currentPortfolioPoint.map(p => p.volatility),
+  ].filter(v => Number.isFinite(v));
+  const allReturns = [
+    ...efficientFrontier.map(p => p.return),
+    ...stockScatter.map(s => s.return),
+    ...currentPortfolioPoint.map(p => p.return),
+  ].filter(v => Number.isFinite(v));
+
+  const xMin = allVolatility.length ? Math.min(...allVolatility) : 0;
+  const xMax = allVolatility.length ? Math.max(...allVolatility) : 1;
+  const yMin = allReturns.length ? Math.min(...allReturns) : 0;
+  const yMax = allReturns.length ? Math.max(...allReturns) : 1;
+  const xPad = Math.max(0.5, (xMax - xMin) * 0.08);
+  const yPad = Math.max(1, (yMax - yMin) * 0.1);
 
   return (
     <div className="space-y-6">
@@ -156,16 +196,39 @@ export default function Portfolio() {
           <h2 className="text-sm font-semibold text-text-primary mb-3">Efficient Frontier</h2>
           <div className="h-48">
             <ResponsiveContainer width="100%" height="100%">
-              <ScatterChart margin={{ top: 5, right: 5, bottom: 20, left: 5 }}>
-                <XAxis dataKey="volatility" name="Volatility" tick={{ fontSize: 10, fill: '#8B949E' }} label={{ value: 'Volatility (%)', position: 'bottom', fontSize: 10, fill: '#8B949E' }} />
-                <YAxis dataKey="return" name="Return" tick={{ fontSize: 10, fill: '#8B949E' }} label={{ value: 'Return (%)', angle: -90, position: 'insideLeft', fontSize: 10, fill: '#8B949E' }} />
-                <Tooltip contentStyle={{ backgroundColor: '#1C2128', border: '1px solid #30363D', borderRadius: 8, fontSize: 12, color: '#E6EDF3' }} />
+              <ScatterChart margin={{ top: 5, right: 12, bottom: 20, left: 8 }}>
+                <CartesianGrid stroke="#30363D" strokeDasharray="3 3" vertical={false} />
+                <XAxis
+                  type="number"
+                  dataKey="volatility"
+                  name="Volatility"
+                  domain={[Math.max(0, xMin - xPad), xMax + xPad]}
+                  tickCount={6}
+                  tick={{ fontSize: 10, fill: '#8B949E' }}
+                  tickFormatter={v => `${v.toFixed(1)}`}
+                  label={{ value: 'Volatility (%)', position: 'bottom', fontSize: 10, fill: '#8B949E' }}
+                />
+                <YAxis
+                  type="number"
+                  dataKey="return"
+                  name="Return"
+                  domain={[yMin - yPad, yMax + yPad]}
+                  tickCount={6}
+                  width={42}
+                  tick={{ fontSize: 10, fill: '#8B949E' }}
+                  tickFormatter={v => `${v.toFixed(1)}`}
+                  label={{ value: 'Return (%)', angle: -90, position: 'insideLeft', fontSize: 10, fill: '#8B949E' }}
+                />
+                <Tooltip
+                  contentStyle={{ backgroundColor: '#1C2128', border: '1px solid #30363D', borderRadius: 8, fontSize: 12, color: '#E6EDF3' }}
+                  formatter={(value, name) => [`${Number(value).toFixed(2)}%`, name === 'volatility' ? 'Volatility' : 'Return']}
+                />
                 {/* Blue frontier curve */}
                 <Scatter name="Frontier" data={efficientFrontier} fill="#58A6FF" line={{ stroke: '#58A6FF', strokeWidth: 2 }} shape="circle" r={0} />
                 {/* Gray dots = individual stock risk/return */}
-                <Scatter name="Stocks" data={individualStocks.map(s => ({ volatility: s.volatility, return: s.return, ticker: s.ticker }))} fill="#8B949E" r={4} />
+                <Scatter name="Stocks" data={stockScatter} fill="#8B949E" r={4} />
                 {/* Green diamond = current portfolio */}
-                <Scatter name="Portfolio" data={[currentPortfolio]} fill="#3FB950" r={7} shape="diamond" />
+                <Scatter name="Portfolio" data={currentPortfolioPoint} fill="#3FB950" r={7} shape="diamond" />
               </ScatterChart>
             </ResponsiveContainer>
           </div>
@@ -280,8 +343,17 @@ export default function Portfolio() {
           <h2 className="text-sm font-semibold text-text-primary mb-3">Sector Breakdown</h2>
           <div className="h-52">
             <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie data={sectorBreakdown} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={85} label={({ name, value }) => `${name} ${value}%`}>
+              <PieChart margin={{ top: 8, right: 36, bottom: 8, left: 36 }}>
+                <Pie
+                  data={sectorBreakdown}
+                  dataKey="value"
+                  nameKey="name"
+                  cx="50%"
+                  cy="50%"
+                  outerRadius={72}
+                  labelLine
+                  label={renderSectorLabel}
+                >
                   {sectorBreakdown.map((s, i) => (
                     <Cell key={i} fill={s.color} />
                   ))}

@@ -1,5 +1,5 @@
 // =============================================================================
-// PAGE: AI-ASSISTED INSIGHTS  (fully wired to Claude API via Flask backend)
+// PAGE: AI-ASSISTED INSIGHTS  (wired to OpenAI via Flask backend)
 // ROUTE: /ai-insights
 // =============================================================================
 
@@ -249,6 +249,8 @@ function MarketSummaryTab({ signals }) {
   const [summary,  setSummary]  = useState('');
   const [loading,  setLoading]  = useState(false);
   const [genTime,  setGenTime]  = useState(null);
+  const [asOf,     setAsOf]     = useState(null);
+  const [model,    setModel]    = useState('');
 
   // heatmap from recent signals' tickers
   const heatmapTickers = [...new Set(signals.map(s => s.ticker))].slice(0, 10);
@@ -265,8 +267,13 @@ function MarketSummaryTab({ signals }) {
   const refresh = () => {
     setLoading(true);
     getMarketSummary()
-      .then(d => { setSummary(d.summary); setGenTime(new Date().toLocaleTimeString()); })
-      .catch(() => setSummary('Unable to generate summary. Please check the backend connection.'))
+      .then(d => {
+        setSummary(d.summary);
+        setGenTime(new Date().toLocaleTimeString());
+        setAsOf(d.asOf ?? null);
+        setModel(d.model ?? '');
+      })
+      .catch(() => setSummary('Unable to generate market update. Please check the backend connection.'))
       .finally(() => setLoading(false));
   };
 
@@ -278,7 +285,7 @@ function MarketSummaryTab({ signals }) {
         <div className="flex items-center gap-2 mb-4">
           <Bot size={20} className="text-accent" />
           <span className="text-text-primary font-semibold">
-            Market Summary — {new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
+            Market Summary — {asOf ?? new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
           </span>
           {genTime && <span className="text-text-secondary text-xs ml-auto">Generated {genTime}</span>}
         </div>
@@ -300,6 +307,9 @@ function MarketSummaryTab({ signals }) {
         {/* Stock heatmap from recent signal tickers */}
         {!loading && (
           <div>
+            <p className="text-text-secondary text-xs mb-3">
+              Snapshot uses the live dashboard context: SPY benchmark, current portfolio metrics, active positions, and recent signals.
+            </p>
             <h3 className="text-xs font-semibold text-text-secondary uppercase mb-2">Active Tickers</h3>
             <div className="grid grid-cols-5 gap-1.5">
               {heatmapData.map(s => (
@@ -324,7 +334,9 @@ function MarketSummaryTab({ signals }) {
       </div>
 
       <div className="bg-bg-surface border border-border rounded-lg px-4 py-3 flex items-center justify-between">
-        <span className="text-text-secondary text-sm">Powered by OpenAI ({genTime ? 'last updated ' + genTime : 'loading…'})</span>
+        <span className="text-text-secondary text-sm">
+          Powered by OpenAI{model ? ` · ${model}` : ''} ({genTime ? 'last updated ' + genTime : 'loading…'})
+        </span>
         <button
           onClick={refresh}
           disabled={loading}
@@ -343,9 +355,10 @@ function AIChat() {
   const [open,     setOpen]     = useState(false);
   const [input,    setInput]    = useState('');
   const [messages, setMessages] = useState([
-    { role: 'ai', text: 'Hello! I can explain trading signals, portfolio allocation, risk metrics, or anything else about the MACD-BB-ATR strategy. What would you like to know?' },
+    { role: 'ai', text: 'Hello! I am the OpenAI assistant for this dashboard. I can explain signals, portfolio allocation, drawdown, and the current market snapshot from the live backend context.' },
   ]);
   const [sending,  setSending]  = useState(false);
+  const [model,    setModel]    = useState('');
   const bottomRef = useRef(null);
 
   useEffect(() => {
@@ -368,9 +381,10 @@ function AIChat() {
 
     try {
       const data = await chatMessage(text, history);
+      if (data.model) setModel(data.model);
       setMessages(prev => [...prev, { role: 'ai', text: data.response }]);
     } catch {
-      setMessages(prev => [...prev, { role: 'ai', text: 'Sorry, I could not reach the AI service. Please make sure the backend is running.' }]);
+      setMessages(prev => [...prev, { role: 'ai', text: 'Sorry, I could not reach the OpenAI service. Please make sure the backend is running.' }]);
     } finally {
       setSending(false);
     }
@@ -390,7 +404,9 @@ function AIChat() {
           <div className="flex items-center justify-between px-4 py-3 border-b border-border">
             <div className="flex items-center gap-2">
               <Bot size={16} className="text-accent" />
-              <span className="text-text-primary text-sm font-semibold">AI Assistant (Claude)</span>
+              <span className="text-text-primary text-sm font-semibold">
+                OpenAI Assistant{model ? ` · ${model}` : ''}
+              </span>
             </div>
             <button onClick={() => setOpen(false)} className="text-text-secondary hover:text-text-primary">&times;</button>
           </div>

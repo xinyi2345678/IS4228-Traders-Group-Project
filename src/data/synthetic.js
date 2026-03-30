@@ -33,6 +33,8 @@ export const dayPnL = 12450;
 export const dayPnLPercent = 1.01;
 // {number} Month-to-date return percentage
 export const mtdPercent = 4.2;
+// {number} Total return since strategy start
+export const totalReturn = 24.53;
 
 // -----------------------------------------------------------------------------
 // COMPONENT: Portfolio Optimization

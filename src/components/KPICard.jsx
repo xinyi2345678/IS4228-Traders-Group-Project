@@ -21,7 +21,17 @@
 
 import { LineChart, Line, ResponsiveContainer } from 'recharts';
 
-export default function KPICard({ label, value, subtext, sparklineData, subtextColor }) {
+export default function KPICard({
+  label,
+  value,
+  subtext,
+  secondarySubtext,
+  sparklineData,
+  subtextColor,
+  secondarySubtextColor,
+  valueColor,
+  sparklineColor,
+}) {
   const chartData = sparklineData?.map((v, i) => ({ i, v })) || [];
 
   return (
@@ -29,15 +39,18 @@ export default function KPICard({ label, value, subtext, sparklineData, subtextC
       {/* Metric label */}
       <span className="text-text-secondary text-xs uppercase tracking-wide">{label}</span>
       {/* Primary value - displayed in monospace for numeric alignment */}
-      <span className="text-text-primary text-2xl font-semibold font-mono">{value}</span>
+      <span className={`text-2xl font-semibold font-mono ${valueColor || 'text-text-primary'}`}>{value}</span>
       {/* Subtext - contextual info, color indicates positive/negative */}
       <span className={`text-xs ${subtextColor || 'text-text-secondary'}`}>{subtext}</span>
+      {secondarySubtext && (
+        <span className={`text-[11px] ${secondarySubtextColor || 'text-text-secondary'}`}>{secondarySubtext}</span>
+      )}
       {/* Sparkline - mini trend chart showing recent history */}
       {chartData.length > 0 && (
         <div className="h-8 mt-1">
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={chartData}>
-              <Line type="monotone" dataKey="v" stroke="#58A6FF" strokeWidth={1.5} dot={false} />
+              <Line type="monotone" dataKey="v" stroke={sparklineColor || '#58A6FF'} strokeWidth={1.5} dot={false} />
             </LineChart>
           </ResponsiveContainer>
         </div>

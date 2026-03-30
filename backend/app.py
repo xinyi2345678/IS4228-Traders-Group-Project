@@ -55,7 +55,7 @@ def _load():
         _cache["results"] = results
 
         logger.info("=== Running portfolio optimiser ===")
-        opt = optimize_portfolio(results["stock_returns"])
+        opt = optimize_portfolio(results["optimizer_history"])
         _cache["opt"] = opt
 
         logger.info("=== Computing performance metrics ===")
@@ -109,10 +109,13 @@ def _format_stocks(opt: dict, current_prices: dict, results: dict) -> list:
 
         # Beta: approximate from stock returns
         beta = 1.0
-        sr = results["stock_returns"].get(ticker)
+        sr = results.get("price_returns", {}).get(ticker)
         bench_df = results.get("bench_df")
         if sr is not None and bench_df is not None and len(bench_df) > 10:
-            br = bench_df["close"].pct_change().dropna()
+            if hasattr(bench_df, "columns") and "close" in bench_df.columns:
+                br = bench_df["close"].pct_change().dropna()
+            else:
+                br = pd.Series(bench_df).pct_change().dropna()
             min_len = min(len(sr), len(br))
             if min_len > 20:
                 cov_m = np.cov(sr.values[-min_len:], br.values[-min_len:])
@@ -205,6 +208,120 @@ def _sector_exposure(final_positions: dict, current_prices: dict, total_val: flo
             for k, v in sorted(sector_exp.items(), key=lambda x: -abs(x[1]))]
 
 
+def _build_ai_context() -> dict:
+    if _cache["state"] != "ready" or not _cache.get("results"):
+        return {}
+
+    results = _cache["results"]
+    metrics = _cache.get("metrics", {}) or {}
+    opt = _cache.get("opt", {}) or {}
+    dv = results.get("daily_values", [])
+    if not dv:
+        return {"metrics": metrics}
+
+    latest = dv[-1]
+    prev = dv[-2] if len(dv) >= 2 else latest
+    first = dv[0]
+
+    latest_portfolio = float(latest.get("portfolio", INITIAL_CAPITAL))
+    prev_portfolio = float(prev.get("portfolio", latest_portfolio))
+    portfolio_day_change_pct = ((latest_portfolio / prev_portfolio) - 1) * 100 if prev_portfolio else 0.0
+
+    benchmark_now = latest.get("benchmark")
+    benchmark_prev = prev.get("benchmark", benchmark_now)
+    benchmark_start = first.get("benchmark", benchmark_now)
+    benchmark_day_change_pct = 0.0
+    benchmark_total_return_pct = 0.0
+    if benchmark_now and benchmark_prev:
+        benchmark_day_change_pct = ((benchmark_now / benchmark_prev) - 1) * 100 if benchmark_prev else 0.0
+    if benchmark_now and benchmark_start:
+        benchmark_total_return_pct = ((benchmark_now / benchmark_start) - 1) * 100 if benchmark_start else 0.0
+
+    final_positions = results.get("final_positions", {})
+    n_long = sum(1 for p in final_positions.values() if p.get("direction") == "LONG")
+    n_short = sum(1 for p in final_positions.values() if p.get("direction") == "SHORT")
+
+    stocks = _format_stocks(opt, results.get("current_prices", {}), results)
+    top_holdings = [
+        {
+            "ticker": s["ticker"],
+            "weightPct": round(s["weight"], 1),
+            "sector": s["sector"],
+            "dayChangePct": round(s["change"], 2),
+        }
+        for s in stocks[:5]
+    ]
+
+    movers = sorted(
+        [
+            {
+                "ticker": ticker,
+                "price": round(info.get("price", 0), 2),
+                "changePct": round(info.get("change", 0), 2),
+            }
+            for ticker, info in results.get("current_prices", {}).items()
+        ],
+        key=lambda item: abs(item["changePct"]),
+        reverse=True,
+    )[:5]
+
+    recent_signals = [
+        {
+            "time": signal["time"],
+            "ticker": signal["ticker"],
+            "action": signal["action"],
+            "type": signal["type"],
+            "detail": (signal.get("detail") or "")[:140],
+        }
+        for signal in _format_signals(results.get("signals", []), n=5)
+    ]
+
+    return {
+        "asOf": pd.Timestamp(latest["date"]).strftime("%Y-%m-%d"),
+        "metrics": {
+            "totalReturnPct": round(metrics.get("totalReturn", 0), 2),
+            "mtdPct": round(metrics.get("mtdPct", 0), 2),
+            "sharpe": round(metrics.get("sharpe", 0), 2),
+            "volatilityPct": round(metrics.get("volatility", 0), 2),
+            "currentDrawdownPct": round(metrics.get("currentDrawdown", 0), 2),
+            "maxDrawdownPct": round(metrics.get("maxDrawdown", 0), 2),
+            "winRatePct": round(metrics.get("winRate", 0), 2),
+        },
+        "strategy": {
+            "name": "MACD-BB-ATR",
+            "rebalanceDays": results.get("params", {}).get("rebalance_freq"),
+            "selectedTickers": results.get("selected_tickers", []),
+        },
+        "market": {
+            "benchmark": {
+                "symbol": "SPY",
+                "value": round(float(benchmark_now), 2) if benchmark_now else None,
+                "dayChangePct": round(benchmark_day_change_pct, 2),
+                "totalReturnPct": round(benchmark_total_return_pct, 2),
+            },
+            "portfolio": {
+                "value": round(latest_portfolio, 2),
+                "dayChangePct": round(portfolio_day_change_pct, 2),
+                "totalReturnPct": round(metrics.get("totalReturn", 0), 2),
+                "mtdPct": round(metrics.get("mtdPct", 0), 2),
+                "currentDrawdownPct": round(metrics.get("currentDrawdown", 0), 2),
+                "maxDrawdownPct": round(metrics.get("maxDrawdown", 0), 2),
+                "sharpe": round(metrics.get("sharpe", 0), 2),
+                "volatilityPct": round(metrics.get("volatility", 0), 2),
+            },
+            "positions": {
+                "long": n_long,
+                "short": n_short,
+                "activeCount": len(final_positions),
+                "activeTickers": sorted(final_positions.keys()),
+            },
+            "topHoldings": top_holdings,
+            "topMovers": movers,
+            "recentSignals": recent_signals,
+        },
+    }
+
+
 # ── Routes ────────────────────────────────────────────────────────────────────
 
 @app.route("/api/status")
@@ -236,11 +353,11 @@ def dashboard():
     stocks   = _format_stocks(opt, results["current_prices"], results)
     sparks   = sparkline_data(dv, results["trades"], n=12)
 
-    # Equity curve: last 90 trading days vs benchmark
+    # Equity curve: full backtest history from SIM_START to today
     equity_curve = []
-    for row in dv[-90:]:
+    for row in dv:
         entry = {
-            "date":      pd.Timestamp(row["date"]).strftime("%b %d"),
+            "date":      pd.Timestamp(row["date"]).strftime("%Y-%m-%d"),
             "portfolio": row["portfolio"],
         }
         if "benchmark" in row and row["benchmark"] is not None:
@@ -268,6 +385,7 @@ def dashboard():
 
     return jsonify({
         "portfolioValue":  round(total, 0),
+        "totalReturn":     metrics.get("totalReturn", 0),
         "dayPnL":          day_pnl,
         "dayPnLPercent":   day_pnl_pct,
         "mtdPercent":      metrics.get("mtdPct", 0),
@@ -420,14 +538,25 @@ def ai_explain():
 @app.route("/api/ai/summary", methods=["POST"])
 def ai_summary():
     if _cache["state"] != "ready":
-        return jsonify({"summary": "Data still loading, please try again shortly."}), 200
+        return jsonify({
+            "summary": "Data still loading, please try again shortly.",
+            "provider": ai_service.provider_name(),
+            "model": ai_service.current_model(),
+        }), 200
 
     metrics  = _cache["metrics"]
     results  = _cache["results"]
     tickers  = results.get("tickers", TICKERS)
     positions = results.get("final_positions", {})
-    summary  = ai_service.market_summary(metrics, positions, tickers)
-    return jsonify({"summary": summary})
+    context = _build_ai_context()
+    summary  = ai_service.market_summary(metrics, positions, tickers, context)
+    return jsonify({
+        "summary": summary,
+        "provider": ai_service.provider_name(),
+        "model": ai_service.current_model(),
+        "asOf": context.get("asOf"),
+        "market": context.get("market", {}),
+    })
 
 
 @app.route("/api/ai/chat", methods=["POST"])
@@ -435,12 +564,14 @@ def ai_chat():
     body    = request.get_json(force=True, silent=True) or {}
     message = body.get("message", "")
     history = body.get("history", [])
-    context = {}
-    if _cache["state"] == "ready":
-        context["metrics"] = _cache.get("metrics", {})
+    context = _build_ai_context() if _cache["state"] == "ready" else {}
 
     reply = ai_service.chat_response(message, history, context)
-    return jsonify({"response": reply})
+    return jsonify({
+        "response": reply,
+        "provider": ai_service.provider_name(),
+        "model": ai_service.current_model(),
+    })
 
 
 @app.route("/api/refresh", methods=["POST"])

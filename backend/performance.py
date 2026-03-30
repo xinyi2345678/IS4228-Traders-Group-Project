@@ -17,7 +17,7 @@ def _daily_returns(values: np.ndarray) -> np.ndarray:
 def compute_metrics(daily_values: list[dict],
                     initial_capital: float,
                     bench_df=None,
-                    risk_free: float = 0.04) -> dict:
+                    risk_free: float = 0.0) -> dict:
     """Compute comprehensive performance metrics matching the notebook."""
 
     if len(daily_values) < 5:
@@ -30,7 +30,7 @@ def compute_metrics(daily_values: list[dict],
     if len(dr) == 0:
         return {}
 
-    rf_daily = risk_free / 252
+    rf_daily = (1 + risk_free) ** (1 / 252) - 1
 
     # ── Returns ───────────────────────────────────────────────────────────────
     total_return = (values[-1] / initial_capital - 1) * 100
@@ -78,7 +78,10 @@ def compute_metrics(daily_values: list[dict],
     # ── Beta / Alpha (vs benchmark) ───────────────────────────────────────────
     beta, alpha = 0.0, 0.0
     if bench_df is not None and len(bench_df) > 10:
-        bench_close = bench_df["close"] if "close" in bench_df.columns else bench_df
+        if isinstance(bench_df, pd.Series):
+            bench_close = bench_df
+        else:
+            bench_close = bench_df["close"] if "close" in bench_df.columns else bench_df
         bench_r     = _daily_returns(bench_close.values)
         min_len     = min(len(dr), len(bench_r))
         if min_len > 10:
@@ -171,7 +174,7 @@ def sparkline_data(daily_values: list[dict],
 
     # Sharpe sparkline: rolling 21-day Sharpe
     dr       = np.diff(values) / np.where(np.array(values[:-1]) == 0, 1, values[:-1])
-    rf_daily = 0.04 / 252
+    rf_daily = 0.0
     sharpe_sp = []
     for i in range(max(0, len(dr) - n), len(dr)):
         win = dr[max(0, i - 20): i + 1]

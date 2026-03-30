@@ -36,13 +36,13 @@ export const fetchMonitoring = ()              => get('/monitoring');
 /** AI-generated risk alerts */
 export const fetchAlerts     = ()              => get('/alerts');
 
-/** Ask Claude to explain a specific trading signal */
+/** Ask the OpenAI assistant to explain a specific trading signal */
 export const explainTrade    = (signal)        => post('/ai/explain', { signal });
 
-/** Ask Claude for a market summary given current portfolio state */
+/** Ask the OpenAI assistant for a market summary given current portfolio state */
 export const getMarketSummary = ()             => post('/ai/summary', {});
 
-/** Send a chat message to Claude */
+/** Send a chat message to the OpenAI assistant */
 export const chatMessage      = (message, history = []) =>
   post('/ai/chat', { message, history });
 

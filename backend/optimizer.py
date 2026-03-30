@@ -1,13 +1,19 @@
 """
-Modern Portfolio Theory optimizer
-Replicates ModernPortfolioOptimizerPro from the notebook using
-Ledoit-Wolf shrinkage + analytical tangent portfolio + scipy frontier.
+Notebook-faithful Modern Portfolio Optimizer.
+
+This mirrors the notebook's ModernPortfolioOptimizerPro:
+- strategy equity returns as the optimizer input
+- Ledoit-Wolf shrinkage covariance
+- exponential weighting on expected returns
+- tangent (max-Sharpe) portfolio
+- analytical efficient frontier
+- top-k stock selection with renormalized weights
 """
+
+import logging
 
 import numpy as np
 import pandas as pd
-import logging
-from scipy.optimize import minimize
 
 logger = logging.getLogger(__name__)
 
@@ -19,162 +25,247 @@ except ImportError:
     logger.warning("scikit-learn not available; falling back to sample covariance")
 
 
-# ── Portfolio math ────────────────────────────────────────────────────────────
+def _build_strategy_return_matrix(stock_equity_history: dict[str, list]) -> pd.DataFrame:
+    dfs = []
+    for symbol, history in (stock_equity_history or {}).items():
+        if not history:
+            continue
 
-def _ledoit_wolf_cov(returns_df: pd.DataFrame) -> np.ndarray:
-    """Ledoit-Wolf shrinkage covariance (annualised)."""
+        df = pd.DataFrame(
+            history,
+            columns=["Date", "Price", "Equity", "StrategyRet", "StockRet"],
+        )
+        df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
+        df = df.dropna(subset=["Date"]).sort_values("Date")
+        df = df.groupby("Date", as_index=True).agg({"StrategyRet": "sum"})
+        dfs.append(df.rename(columns={"StrategyRet": symbol}))
+
+    if not dfs:
+        raise ValueError("No valid strategy histories available.")
+
+    merged = pd.concat(dfs, axis=1, join="outer").fillna(0.0).astype(float)
+    var = merged.var(axis=0)
+    keep = var[var > 1e-12].index
+    merged = merged[keep]
+
+    if merged.shape[1] == 0:
+        raise ValueError("All strategy series have near-zero variance.")
+
+    return merged
+
+
+def _compute_statistics(
+    returns_df: pd.DataFrame,
+    annualize: bool = True,
+    ridge_alpha: float = 1e-5,
+    winsorize: bool = True,
+) -> tuple[np.ndarray, np.ndarray]:
+    data = returns_df.copy()
+
+    if winsorize:
+        data = data.clip(
+            lower=data.quantile(0.01),
+            upper=data.quantile(0.99),
+            axis=1,
+        )
+
+    weights = np.exp(np.linspace(-1, 0, len(data)))
+    weights /= weights.sum()
+    mean_returns = np.asarray((data * weights[:, None]).sum(axis=0).values, dtype=float).copy()
+
     if _HAS_LW:
-        lw = LedoitWolf()
-        lw.fit(returns_df.dropna())
-        return lw.covariance_ * 252
-    return returns_df.cov().values * 252
+        lw = LedoitWolf().fit(data.values)
+        cov_matrix = lw.covariance_
+    else:
+        cov_matrix = np.cov(data.values, rowvar=False)
+
+    if annualize:
+        mean_returns *= 252
+        cov_matrix *= 252
+
+    ridge = ridge_alpha * np.trace(cov_matrix) / len(cov_matrix)
+    cov_matrix += ridge * np.eye(len(cov_matrix))
+
+    return mean_returns, cov_matrix
 
 
-def tangent_portfolio(mu: np.ndarray, cov: np.ndarray,
-                      risk_free: float = 0.04,
-                      ridge_alpha: float = 1e-5) -> np.ndarray:
-    """Analytical max-Sharpe (long-only) weights."""
-    n = len(mu)
-    trace = np.trace(cov)
-    cov_reg = cov + ridge_alpha * (trace / n) * np.eye(n)
-
-    excess = mu - risk_free
-    cov_inv = np.linalg.pinv(cov_reg)
-    z = cov_inv @ excess
-    z = np.maximum(z, 0)          # long-only
-
-    if z.sum() < 1e-10:
-        return np.ones(n) / n     # equal-weight fallback
-    return z / z.sum()
+def _portfolio_metrics(
+    weights: np.ndarray,
+    mean_returns: np.ndarray,
+    cov_matrix: np.ndarray,
+    risk_free_rate: float,
+) -> tuple[float, float, float]:
+    ret = float(mean_returns @ weights)
+    vol = float(np.sqrt(weights @ cov_matrix @ weights))
+    sharpe = (ret - risk_free_rate) / vol if vol > 0 else 0.0
+    return ret, vol, sharpe
 
 
-def efficient_frontier(mu: np.ndarray, cov: np.ndarray,
-                       n_points: int = 30,
-                       risk_free: float = 0.04) -> list[dict]:
-    """Efficient frontier via scipy SLSQP."""
-    n = len(mu)
-    ret_min = mu.min()
-    ret_max = mu.max() * 0.95
-    targets = np.linspace(ret_min, ret_max, n_points)
+def _tangent_portfolio(
+    mean_returns: np.ndarray,
+    cov_matrix: np.ndarray,
+    risk_free_rate: float = 0.0,
+    long_only: bool = True,
+    lambda_reg: float = 1e-3,
+) -> np.ndarray:
+    sigma = cov_matrix + lambda_reg * np.eye(len(cov_matrix))
+    mu_excess = mean_returns - risk_free_rate
 
-    def portfolio_var(w):
-        return w @ cov @ w
+    inv_sigma = np.linalg.pinv(sigma)
+    weights = inv_sigma @ mu_excess
 
+    if long_only:
+        weights = np.maximum(weights, 0.0)
+
+    if weights.sum() <= 1e-12:
+        return np.ones(len(weights)) / len(weights)
+
+    return weights / weights.sum()
+
+
+def _efficient_frontier(
+    mean_returns: np.ndarray,
+    cov_matrix: np.ndarray,
+    risk_free_rate: float = 0.0,
+    num_points: int = 30,
+) -> pd.DataFrame:
+    inv_sigma = np.linalg.pinv(cov_matrix)
+    ones = np.ones(len(mean_returns))
+
+    a = ones @ inv_sigma @ ones
+    b = ones @ inv_sigma @ mean_returns
+    c = mean_returns @ inv_sigma @ mean_returns
+    d = a * c - b ** 2
+
+    target_returns = np.linspace(mean_returns.min(), mean_returns.max(), num_points)
     frontier = []
-    w0 = np.ones(n) / n
-    for r_target in targets:
-        constraints = [
-            {"type": "eq", "fun": lambda w: w.sum() - 1},
-            {"type": "eq", "fun": lambda w, r=r_target: w @ mu - r},
-        ]
-        bounds = [(0, 1)] * n
-        res = minimize(portfolio_var, w0, method="SLSQP",
-                       bounds=bounds, constraints=constraints,
-                       options={"ftol": 1e-9, "disp": False, "maxiter": 200})
-        if res.success:
-            vol = np.sqrt(res.fun) * 100
-            ret = r_target * 100
-            sharpe = (r_target - risk_free) / np.sqrt(res.fun) if res.fun > 0 else 0
-            frontier.append({"volatility": round(vol, 2),
-                              "return":     round(ret, 2),
-                              "sharpe":     round(sharpe, 3)})
-    return frontier
+
+    for target in target_returns:
+        weights = inv_sigma @ ((c - b * target) * ones + (a * target - b) * mean_returns) / d
+        weights = np.maximum(weights, 0.0)
+        if weights.sum() <= 1e-12:
+            continue
+        weights /= weights.sum()
+
+        ret, vol, sharpe = _portfolio_metrics(weights, mean_returns, cov_matrix, risk_free_rate)
+        frontier.append({
+            "volatility": round(vol * 100, 2),
+            "return": round(ret * 100, 2),
+            "sharpe": round(sharpe, 3),
+        })
+
+    return pd.DataFrame(frontier)
 
 
-# ── Risk contribution ─────────────────────────────────────────────────────────
-
-def marginal_risk_contribution(w: np.ndarray, cov: np.ndarray) -> np.ndarray:
-    """Percentage contribution of each asset to total portfolio variance."""
-    port_var = w @ cov @ w
-    if port_var < 1e-12:
-        return np.ones(len(w)) / len(w) * 100
-    mrc = (cov @ w) * w / port_var
-    return (mrc / mrc.sum() * 100).round(1)
-
-
-# ── Public entry point ────────────────────────────────────────────────────────
-
-def optimize_portfolio(stock_returns: dict[str, pd.Series],
-                       risk_free: float = 0.04) -> dict:
+def optimize_portfolio(
+    stock_equity_history: dict[str, list],
+    risk_free: float = 0.0,
+    top_k: int = 6,
+    weight_threshold: float = 0.05,
+) -> dict:
     """
-    Parameters
-    ----------
-    stock_returns : {ticker: daily_returns_Series}
+    Optimize allocations from notebook-style stock_equity_history.
 
-    Returns
-    -------
-    dict with allocations, frontier, portfolio metrics, individual metrics
+    Expected input per symbol:
+    [(date, price, equity, strategy_logreturn, stock_logreturn), ...]
     """
-    # Align returns into a DataFrame
-    df = pd.DataFrame(stock_returns).dropna(how="all")
-    # Drop near-zero variance columns
-    df = df[[c for c in df.columns if df[c].std() > 1e-8]]
-    df = df.dropna()
-
-    if df.empty or len(df) < 30:
-        logger.warning("Not enough return data for optimization; using equal weights")
-        tickers_out = list(stock_returns.keys())
-        n = len(tickers_out)
-        w = {t: round(1 / n, 4) for t in tickers_out}
-        return {"allocations": w, "frontier": [], "portfolio_metrics": {},
-                "individual_metrics": {}}
-
-    tickers = list(df.columns)
-    n = len(tickers)
-
-    mu  = df.mean().values * 252          # annualised mean returns
-    cov = _ledoit_wolf_cov(df)            # annualised cov
-
-    # Tangent portfolio
-    w_opt = tangent_portfolio(mu, cov, risk_free=risk_free)
-
-    # Round and normalise to sum to 100 %
-    rounded = np.round(w_opt, 4)
-    rounded = rounded / rounded.sum()
-
-    allocations = {t: round(float(rounded[i]), 4) for i, t in enumerate(tickers)}
-
-    # Efficient frontier
     try:
-        frontier = efficient_frontier(mu, cov, n_points=30, risk_free=risk_free)
-    except Exception as exc:
-        logger.warning(f"Efficient frontier failed: {exc}")
-        frontier = []
-
-    # Portfolio-level metrics (annualised)
-    p_ret = float(w_opt @ mu)
-    p_vol = float(np.sqrt(w_opt @ cov @ w_opt))
-    p_sharpe = (p_ret - risk_free) / p_vol if p_vol > 0 else 0
-
-    # Risk contribution
-    mrc = marginal_risk_contribution(w_opt, cov)
-    risk_contrib = [{"ticker": t, "risk": round(float(mrc[i]), 1)}
-                    for i, t in enumerate(tickers)]
-
-    # Individual stock metrics
-    individual = {}
-    for i, t in enumerate(tickers):
-        individual[t] = {
-            "return":     round(float(mu[i]) * 100, 2),
-            "volatility": round(float(np.sqrt(cov[i, i])) * 100, 2),
+        returns_df = _build_strategy_return_matrix(stock_equity_history)
+    except ValueError as exc:
+        logger.warning(f"Optimizer fallback to equal weights: {exc}")
+        tickers = list((stock_equity_history or {}).keys())
+        if not tickers:
+            return {
+                "allocations": {},
+                "selected_tickers": [],
+                "frontier": [],
+                "portfolio_metrics": {},
+                "individual_metrics": {},
+                "risk_contribution": [],
+                "corr_to_port": {},
+            }
+        equal = round(1 / len(tickers), 4)
+        return {
+            "allocations": {t: equal for t in tickers},
+            "selected_tickers": tickers,
+            "frontier": [],
+            "portfolio_metrics": {},
+            "individual_metrics": {},
+            "risk_contribution": [],
+            "corr_to_port": {},
         }
 
-    # Correlation of each stock to optimised portfolio
-    port_ret_series = df @ w_opt
+    mean_returns, cov_matrix = _compute_statistics(returns_df)
+    symbols = list(returns_df.columns)
+
+    raw_weights = _tangent_portfolio(mean_returns, cov_matrix, risk_free_rate=risk_free, long_only=True)
+    raw_df = (
+        pd.DataFrame({"Stock": symbols, "Weight": raw_weights})
+        .sort_values("Weight", ascending=False)
+        .reset_index(drop=True)
+    )
+
+    if top_k and top_k > 0:
+        selected_df = raw_df.iloc[:top_k].copy()
+    else:
+        selected_df = raw_df[raw_df["Weight"].abs() > weight_threshold].copy()
+
+    total = float(selected_df["Weight"].sum())
+    if total <= 1e-12:
+        selected_df = raw_df.iloc[: min(6, len(raw_df))].copy()
+        total = float(selected_df["Weight"].sum())
+
+    selected_df["Weight"] = (selected_df["Weight"] / total).round(4)
+    selected_tickers = selected_df["Stock"].tolist()
+    allocations = dict(zip(selected_df["Stock"], selected_df["Weight"]))
+
+    full_weight_map = {s: raw_weights[i] for i, s in enumerate(symbols)}
+    selected_weights = np.array([allocations[s] for s in selected_tickers], dtype=float)
+    selected_mu = np.array([mean_returns[symbols.index(s)] for s in selected_tickers], dtype=float)
+    selected_idx = [symbols.index(s) for s in selected_tickers]
+    selected_cov = cov_matrix[np.ix_(selected_idx, selected_idx)]
+
+    frontier_df = _efficient_frontier(mean_returns, cov_matrix, risk_free_rate=risk_free, num_points=30)
+    port_ret, port_vol, port_sharpe = _portfolio_metrics(
+        selected_weights,
+        selected_mu,
+        selected_cov,
+        risk_free,
+    )
+
+    port_var = selected_weights @ selected_cov @ selected_weights
+    if port_var > 1e-12:
+        mrc = ((selected_cov @ selected_weights) * selected_weights / port_var)
+        mrc = mrc / mrc.sum() * 100
+    else:
+        mrc = np.ones(len(selected_tickers)) / len(selected_tickers) * 100
+
+    individual_metrics = {}
     corr_to_port = {}
-    for t in tickers:
-        r = np.corrcoef(df[t].values, port_ret_series.values)[0, 1]
-        corr_to_port[t] = round(float(r), 3)
+    port_series = returns_df[selected_tickers] @ selected_weights
+    for symbol in symbols:
+        idx = symbols.index(symbol)
+        individual_metrics[symbol] = {
+            "return": round(float(mean_returns[idx]) * 100, 2),
+            "volatility": round(float(np.sqrt(cov_matrix[idx, idx])) * 100, 2),
+        }
+        corr = np.corrcoef(returns_df[symbol].values, port_series.values)[0, 1]
+        corr_to_port[symbol] = round(float(corr), 3) if np.isfinite(corr) else 0.0
 
     return {
-        "allocations":      allocations,
-        "frontier":         frontier,
-        "risk_contribution": risk_contrib,
+        "allocations": allocations,
+        "selected_tickers": selected_tickers,
+        "frontier": frontier_df.to_dict("records"),
+        "risk_contribution": [
+            {"ticker": selected_tickers[i], "risk": round(float(mrc[i]), 1)}
+            for i in range(len(selected_tickers))
+        ],
         "portfolio_metrics": {
-            "return":     round(p_ret * 100, 2),
-            "volatility": round(p_vol * 100, 2),
-            "sharpe":     round(p_sharpe, 3),
+            "return": round(port_ret * 100, 2),
+            "volatility": round(port_vol * 100, 2),
+            "sharpe": round(port_sharpe, 3),
         },
-        "individual_metrics": individual,
-        "corr_to_port":    corr_to_port,
+        "individual_metrics": individual_metrics,
+        "corr_to_port": corr_to_port,
+        "raw_weights": {s: round(float(full_weight_map[s]), 4) for s in symbols},
     }

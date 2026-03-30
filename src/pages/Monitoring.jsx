@@ -36,6 +36,10 @@ import {
 } from 'recharts';
 import { Pause, Filter, Radio } from 'lucide-react';
 
+const getSignedCurrency = (value) => `${value >= 0 ? '+' : '-'}$${Math.abs(value).toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
+const getSignedPercent = (value) => `${value >= 0 ? '+' : '-'}${Math.abs(value).toFixed(2)}%`;
+const getMetricColor = (value) => (value >= 0 ? 'text-profit' : 'text-loss');
+
 export default function Monitoring() {
   const [selectedSignal, setSelectedSignal] = useState(null);
   const [live, setLive] = useState(null);
@@ -90,13 +94,25 @@ export default function Monitoring() {
             DATA: monitoringKPIs.unrealizedPnL {number} USD
             Total P&L on positions that are still OPEN.
             TEMPLATE: "+$<unrealized_pnl>" */}
-        <KPICard label="Unrealized P&L" value={`+$${monitoringKPIs.unrealizedPnL.toLocaleString()}`} subtext="Open positions" subtextColor="text-profit" />
+        <KPICard
+          label="Unrealized P&L"
+          value={getSignedCurrency(monitoringKPIs.unrealizedPnL)}
+          valueColor={getMetricColor(monitoringKPIs.unrealizedPnL)}
+          subtext="Open positions"
+          subtextColor={getMetricColor(monitoringKPIs.unrealizedPnL)}
+        />
 
         {/* KPI: Realized P&L
             DATA: monitoringKPIs.realizedPnL {number} USD
             Total P&L on positions CLOSED today.
             TEMPLATE: "+$<realized_pnl>" */}
-        <KPICard label="Realized P&L" value={`+$${monitoringKPIs.realizedPnL.toLocaleString()}`} subtext="Closed today" subtextColor="text-profit" />
+        <KPICard
+          label="Realized P&L"
+          value={getSignedCurrency(monitoringKPIs.realizedPnL)}
+          valueColor={getMetricColor(monitoringKPIs.realizedPnL)}
+          subtext="Closed today"
+          subtextColor={getMetricColor(monitoringKPIs.realizedPnL)}
+        />
 
         {/* KPI: Win Rate
             DATA: monitoringKPIs.winRate {number} %
@@ -109,7 +125,13 @@ export default function Monitoring() {
             (long_value - short_value) / total_value * 100.
             Positive = net long, Negative = net short.
             TEMPLATE: "<net_exposure>% Net Long/Short" */}
-        <KPICard label="Net Exposure" value={`${monitoringKPIs.netExposure}%`} subtext="Net Long" subtextColor="text-accent" />
+        <KPICard
+          label="Net Exposure"
+          value={getSignedPercent(monitoringKPIs.netExposure)}
+          valueColor={monitoringKPIs.netExposure >= 0 ? 'text-accent' : 'text-loss'}
+          subtext={monitoringKPIs.netExposure >= 0 ? 'Net Long' : 'Net Short'}
+          subtextColor={monitoringKPIs.netExposure >= 0 ? 'text-accent' : 'text-loss'}
+        />
       </div>
 
       {/* ================================================================

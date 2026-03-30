@@ -5,13 +5,14 @@ Falls back to template responses if the key is not available.
 """
 
 import os
+import json
 import logging
 from typing import Optional
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-MODEL = "gpt-4o-mini"   # fast + cheap; swap to "gpt-4o" for higher quality
+DEFAULT_MODEL = "gpt-4o-mini"
 
 # ── Load .env ─────────────────────────────────────────────────────────────────
 
@@ -31,13 +32,33 @@ _load_env()
 
 # ── Client ────────────────────────────────────────────────────────────────────
 
+def current_model() -> str:
+    for key in ("OPENAI_MODEL", "VITE_OPENAI_MODEL"):
+        value = os.getenv(key, "").strip()
+        if value:
+            return value
+    return DEFAULT_MODEL
+
+
+def provider_name() -> str:
+    return "OpenAI"
+
+
+def _context_json(context: Optional[dict]) -> str:
+    if not context:
+        return "{}"
+    try:
+        return json.dumps(context, ensure_ascii=True, default=str, indent=2)
+    except Exception:
+        return str(context)
+
 def _client():
     api_key = os.getenv("OPENAI_API", "")
     if not api_key:
         return None
     try:
         from openai import OpenAI
-        return OpenAI(api_key=api_key)
+        return OpenAI(api_key=api_key, timeout=20.0, max_retries=1)
     except Exception as exc:
         logger.warning(f"Could not initialise OpenAI client: {exc}")
         return None
@@ -49,7 +70,7 @@ def _call(messages: list, max_tokens: int = 600) -> str | None:
         return None
     try:
         resp = client.chat.completions.create(
-            model=MODEL,
+            model=current_model(),
             messages=messages,
             max_tokens=max_tokens,
             temperature=0.4,
@@ -166,14 +187,28 @@ Use the actual numbers. Be specific."""
 
 # ── Market Summary ────────────────────────────────────────────────────────────
 
-def market_summary(metrics: dict, positions: dict, tickers: list) -> str:
+def market_summary(metrics: dict, positions: dict, tickers: list,
+                   context: Optional[dict] = None) -> str:
     n_long  = sum(1 for p in positions.values() if p.get("direction") == "LONG")
     n_short = sum(1 for p in positions.values() if p.get("direction") == "SHORT")
+    context_json = _context_json(context)
 
-    system = "You are a quantitative portfolio manager writing a daily market briefing."
-    user = f"""Summarise the current state of this algorithmic trading portfolio in 3 short paragraphs.
+    system = (
+        "You are an OpenAI market assistant for a live quantitative trading dashboard. "
+        "Use only the supplied live context. Do not invent dates, macro events, or catalysts "
+        "that are not explicitly present in the context. If a detail is unavailable, say so. "
+        "When naming active positions, only use tickers present in the live context."
+    )
+    user = f"""Write a current market and portfolio update in 3 short paragraphs.
 
-Portfolio Statistics:
+Use these rules:
+- Anchor the update to the live dashboard snapshot only.
+- Mention the as-of date from context if it exists.
+- Cover SPY/benchmark tone, portfolio positioning, and current risk.
+- Quote concrete numbers from the context.
+- Keep it concise and data-driven.
+
+Fallback portfolio statistics:
 - Total Return: {metrics.get('totalReturn', 0):.1f}%
 - CAGR: {metrics.get('cagr', 0):.1f}%
 - Sharpe Ratio: {metrics.get('sharpe', 0):.2f}
@@ -184,26 +219,31 @@ Portfolio Statistics:
 - Active Positions: {n_long} long, {n_short} short
 - Universe: {', '.join(tickers)}
 
-Paragraph 1: Market regime and portfolio positioning.
-Paragraph 2: Performance highlights and risk assessment.
-Paragraph 3: Outlook and key risks to monitor.
-
-Be concise and data-driven."""
+Live context JSON:
+{context_json}"""
 
     result = _call([{"role": "system", "content": system},
                     {"role": "user",   "content": user}], max_tokens=400)
     if result:
         return result
 
+    market = (context or {}).get("market", {})
+    portfolio = market.get("portfolio", {})
+    benchmark = market.get("benchmark", {})
+    as_of = (context or {}).get("asOf", "the latest snapshot")
     regime = "trending bullish" if metrics.get("rollingSharpe", 0) > 1.0 else "mixed"
     return (
-        f"The portfolio is operating in a {regime} market regime with {n_long} long "
-        f"and {n_short} short positions across {len(tickers)} large-cap US equities.\n\n"
-        f"Total Return: {metrics.get('totalReturn', 0):.1f}% | Sharpe: {metrics.get('sharpe', 0):.2f} | "
-        f"Max Drawdown: {abs(metrics.get('maxDrawdown', 0)):.1f}% | "
-        f"Volatility: {metrics.get('volatility', 0):.1f}%.\n\n"
-        f"Key risks: drawdown at {abs(metrics.get('currentDrawdown', 0)):.1f}%, "
-        f"potential volatility spikes during earnings, and correlation breakdown between strategy legs."
+        f"As of {as_of}, the dashboard snapshot points to a {regime} regime. "
+        f"SPY is {benchmark.get('dayChangePct', 0):+.2f}% on the day and "
+        f"{benchmark.get('totalReturnPct', 0):+.1f}% since the backtest start, while the "
+        f"portfolio is {portfolio.get('dayChangePct', 0):+.2f}% on the day with "
+        f"{portfolio.get('totalReturnPct', 0):+.1f}% total return.\n\n"
+        f"The portfolio currently holds {n_long} long and {n_short} short positions across "
+        f"{len(tickers)} large-cap US equities. Sharpe is {metrics.get('sharpe', 0):.2f}, "
+        f"annualised volatility is {metrics.get('volatility', 0):.1f}%, and current drawdown "
+        f"is {metrics.get('currentDrawdown', 0):.1f}%.\n\n"
+        f"Key risks to monitor are drawdown control, any deterioration in the recent signal mix, "
+        f"and whether benchmark momentum remains supportive of the current long-biased book."
     )
 
 
@@ -257,19 +297,17 @@ def generate_alerts(metrics: dict, positions: dict, trades: list,
 def chat_response(message: str, history: list,
                   context: Optional[dict] = None) -> str:
     system = (
-        "You are an AI trading assistant for a quantitative trading system using a "
-        "MACD + Bollinger Bands + ATR strategy on large-cap US equities "
-        "(AAPL, AMZN, META, GOOG, GOOGL, NVDA, MSFT, AVGO, TSLA, BRK-B). "
+        "You are an OpenAI AI Assistant for a live quantitative trading dashboard using a "
+        "MACD + Bollinger Bands + ATR strategy on a large-cap US equity universe. "
         "Four strategy legs: Long Momentum (LM), Short Momentum (SM), "
         "Long Reversion (LR), Short Reversion (SR). "
         "Portfolio optimised via Modern Portfolio Theory (Ledoit-Wolf + tangent portfolio). "
-        "Be concise, data-driven, and helpful."
+        "Be concise, data-driven, and helpful. Never mention Claude. "
+        "Never invent dates, market catalysts, or macro events that are not explicitly present in the live context. "
+        "When naming current holdings or active positions, only use tickers present in the live context."
     )
-    if context and context.get("metrics"):
-        m = context["metrics"]
-        system += (f"\n\nCurrent metrics — Return: {m.get('totalReturn',0):.1f}%, "
-                   f"Sharpe: {m.get('sharpe',0):.2f}, "
-                   f"Drawdown: {m.get('currentDrawdown',0):.1f}%.")
+    if context:
+        system += f"\n\nLive dashboard context JSON:\n{_context_json(context)}"
 
     messages = [{"role": "system", "content": system}]
     for h in history[-8:]:
@@ -282,16 +320,30 @@ def chat_response(message: str, history: list,
 
     # Fallback
     msg_lower = message.lower()
+    market = (context or {}).get("market", {})
+    portfolio = market.get("portfolio", {})
+    benchmark = market.get("benchmark", {})
+    positions = market.get("positions", {})
+    as_of = (context or {}).get("asOf", "the latest dashboard snapshot")
+    if any(w in msg_lower for w in ["market", "overview", "summary", "spy", "benchmark"]):
+        return (
+            f"As of {as_of}, SPY is {benchmark.get('dayChangePct', 0):+.2f}% on the day and "
+            f"{benchmark.get('totalReturnPct', 0):+.1f}% since the backtest start. "
+            f"The portfolio is {portfolio.get('dayChangePct', 0):+.2f}% on the day, "
+            f"{portfolio.get('totalReturnPct', 0):+.1f}% since start, with "
+            f"{portfolio.get('currentDrawdownPct', 0):.1f}% current drawdown and "
+            f"{positions.get('long', 0)} long / {positions.get('short', 0)} short positions."
+        )
     if any(w in msg_lower for w in ["macd", "indicator", "signal"]):
         return ("The strategy uses MACD histogram thresholds scaled by robust MAD. "
                 "Moderate zones trigger momentum trades (LM/SM); extreme zones trigger reversion (LR/SR). "
                 "Bollinger Bands on log-price confirm signal direction.")
     if any(w in msg_lower for w in ["portfolio", "allocation", "weight"]):
         return ("Allocation uses Modern Portfolio Theory: Ledoit-Wolf shrinkage covariance "
-                "+ max-Sharpe tangent portfolio (long-only). Rebalances every 90 days.")
+                "+ max-Sharpe tangent portfolio (long-only). Rebalances every 120 trading days.")
     if any(w in msg_lower for w in ["risk", "drawdown", "stop"]):
-        return ("Risk managed via ATR-scaled stop-losses and take-profits. "
-                "Trailing stops tighten as positions move in favour. "
-                "A time-stop closes positions after 15 bars if neither TP nor SL is hit.")
+        return ("Risk is managed with ATR-scaled stop-losses and take-profits plus a 26-bar time stop. "
+                "The current notebook-aligned setup does not use trailing stops by default, "
+                "and portfolio drawdown is monitored against the live dashboard snapshot.")
     return ("I can help with trading signals, portfolio allocation, risk management, "
             "or performance metrics. What would you like to know?")

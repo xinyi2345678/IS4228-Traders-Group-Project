@@ -47,6 +47,28 @@ const alertBorders = {
   info: 'border-l-accent bg-accent/5',
 };
 
+const formatEquityAxisDate = (value) => {
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return value;
+  return d.toLocaleDateString([], { month: 'short', year: '2-digit' });
+};
+
+const formatEquityTooltipDate = (value) => {
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return value;
+  return d.toLocaleDateString([], { year: 'numeric', month: 'short', day: 'numeric' });
+};
+
+const formatEquityAxisValue = (value) => {
+  if (value >= 1_000_000) return `$${(value / 1_000_000).toFixed(1)}M`;
+  return `$${Math.round(value / 1000)}k`;
+};
+
+const getSignedCurrency = (value) => `${value >= 0 ? '+' : '-'}$${Math.abs(value).toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
+const getSignedPercent = (value) => `${value >= 0 ? '+' : '-'}${Math.abs(value).toFixed(2)}%`;
+const getPercentColor = (value) => (value >= 0 ? 'text-profit' : 'text-loss');
+const getValueColor = (value) => (value >= 0 ? 'text-text-primary' : 'text-loss');
+
 export default function Dashboard() {
   const [live,        setLive]        = useState(null);
   const [lastUpdated, setLastUpdated] = useState(null);
@@ -95,6 +117,7 @@ export default function Dashboard() {
 
   // Merge live data with synthetic fallback
   const portfolioValue  = live?.portfolioValue  ?? synthetic.portfolioValue;
+  const totalReturn     = live?.totalReturn     ?? synthetic.totalReturn;
   const dayPnL          = live?.dayPnL          ?? synthetic.dayPnL;
   const dayPnLPercent   = live?.dayPnLPercent   ?? synthetic.dayPnLPercent;
   const mtdPercent      = live?.mtdPercent      ?? synthetic.mtdPercent;
@@ -143,8 +166,10 @@ export default function Dashboard() {
         <KPICard
           label="Total Portfolio Value"
           value={`$${portfolioValue.toLocaleString()}`}
-          subtext={`+${mtdPercent}% MTD`}
-          subtextColor="text-profit"
+          subtext={`${getSignedPercent(totalReturn)} Since Start`}
+          subtextColor={getPercentColor(totalReturn)}
+          secondarySubtext={`${getSignedPercent(mtdPercent)} MTD`}
+          secondarySubtextColor={getPercentColor(mtdPercent)}
           sparklineData={sparklines.portfolio}
         />
 
@@ -156,9 +181,11 @@ export default function Dashboard() {
             COLOR: Green if positive, red if negative */}
         <KPICard
           label="Day P&L"
-          value={`+$${dayPnL.toLocaleString()}`}
-          subtext={`+${dayPnLPercent}%`}
-          subtextColor="text-profit"
+          value={getSignedCurrency(dayPnL)}
+          valueColor={getValueColor(dayPnL)}
+          subtext={getSignedPercent(dayPnLPercent)}
+          subtextColor={getPercentColor(dayPnLPercent)}
+          sparklineColor={dayPnL >= 0 ? '#58A6FF' : '#F85149'}
           sparklineData={sparklines.pnl}
         />
 
@@ -206,20 +233,37 @@ export default function Dashboard() {
           <h2 className="text-sm font-semibold text-text-primary mb-3">Equity Curve</h2>
           <div className="h-64">
             <ResponsiveContainer width="100%" height="100%">
-              <ComposedChart data={equityCurve}>
-                <XAxis dataKey="date" tick={{ fontSize: 10, fill: '#8B949E' }} interval={14} />
-                <YAxis tick={{ fontSize: 10, fill: '#8B949E' }} tickFormatter={v => `$${(v / 1000).toFixed(0)}k`} />
+              <ComposedChart data={equityCurve} margin={{ top: 8, right: 8, bottom: 8, left: 20 }}>
+                <XAxis
+                  dataKey="date"
+                  tick={{ fontSize: 10, fill: '#8B949E' }}
+                  minTickGap={72}
+                  tickFormatter={formatEquityAxisDate}
+                />
+                <YAxis
+                  yAxisId="usd"
+                  width={84}
+                  tick={{ fontSize: 10, fill: '#8B949E' }}
+                  tickFormatter={formatEquityAxisValue}
+                  domain={['dataMin - 50000', 'dataMax + 50000']}
+                  tickCount={6}
+                />
+                <YAxis yAxisId="drawdown" hide domain={[-25, 0]} />
                 <Tooltip
                   contentStyle={{ backgroundColor: '#1C2128', border: '1px solid #30363D', borderRadius: 8, fontSize: 12, color: '#E6EDF3' }}
-                  formatter={(v, name) => [name === 'drawdown' ? `${v}%` : `$${v.toLocaleString()}`, name]}
+                  labelFormatter={formatEquityTooltipDate}
+                  formatter={(v, name) => [
+                    String(name).toLowerCase() === 'drawdown' ? `${v}%` : `$${v.toLocaleString()}`,
+                    name,
+                  ]}
                 />
                 <Legend wrapperStyle={{ fontSize: 11, color: '#8B949E' }} />
                 {/* Blue solid line = portfolio value */}
-                <Line type="monotone" dataKey="portfolio" stroke="#58A6FF" strokeWidth={2} dot={false} name="Portfolio" />
+                <Line yAxisId="usd" type="monotone" dataKey="portfolio" stroke="#58A6FF" strokeWidth={2} dot={false} name="Portfolio" />
                 {/* Gray dashed line = benchmark (SPY) */}
-                <Line type="monotone" dataKey="benchmark" stroke="#8B949E" strokeWidth={1.5} dot={false} strokeDasharray="4 4" name="Benchmark (SPY)" />
+                <Line yAxisId="usd" type="monotone" dataKey="benchmark" stroke="#8B949E" strokeWidth={1.5} dot={false} strokeDasharray="4 4" name="Benchmark (SPY)" />
                 {/* Red shaded area = drawdown from peak */}
-                <Area type="monotone" dataKey="drawdown" fill="#F85149" fillOpacity={0.1} stroke="none" name="Drawdown" />
+                <Area yAxisId="drawdown" type="monotone" dataKey="drawdown" fill="#F85149" fillOpacity={0.1} stroke="none" name="Drawdown" />
               </ComposedChart>
             </ResponsiveContainer>
           </div>
