@@ -1,7 +1,7 @@
 """
 Notebook-faithful trading pipeline for the dashboard backend.
 
-The dashboard uses a live-ish test window (2021-01-01 -> today), but the
+The dashboard uses a live-ish test window (2025-01-01 -> today), and the
 strategy logic, optimizer inputs, and tuned parameters are aligned to the
 project notebook.
 """
@@ -58,34 +58,34 @@ SECTOR_COLORS = {
 
 # Tuned params from the notebook's best_params cells.
 DEFAULT_PARAMS = {
-    "macd_fast": 13,
+    "macd_fast": 20,
     "macd_slow": 35,
-    "macd_signal": 8,
-    "macd_std_window": 83,
-    "macd_k": 1.15,
-    "macd_k_mid": 0.85,
-    "bb_window": 15,
-    "bb_std_dev": 1.4,
-    "atr_window": 18,
-    "tp_mult_lm": 3.5,
-    "sl_mult_lm": 2.1,
-    "tp_mult_sm": 5.9,
-    "sl_mult_sm": 1.55,
-    "tp_mult_lr": 10.6,
-    "sl_mult_lr": 2.9,
-    "tp_mult_sr": 5.5,
+    "macd_signal": 6,
+    "macd_std_window": 73,
+    "macd_k": 2.0,
+    "macd_k_mid": 0.8,
+    "bb_window": 24,
+    "bb_std_dev": 1.75,
+    "atr_window": 19,
+    "tp_mult_lm": 4.6,
+    "sl_mult_lm": 1.7000000000000002,
+    "tp_mult_sm": 4.3,
+    "sl_mult_sm": 1.9500000000000002,
+    "tp_mult_lr": 12.600000000000001,
+    "sl_mult_lr": 2.2,
+    "tp_mult_sr": 4.3,
     "sl_mult_sr": 3.1,
-    "use_trailing": False,
-    "trail_mult": 3.7,
-    "trail_tp": False,
-    "time_stop": 26,
-    "cooldown": 0,
-    "rebounce_block": 2,
-    "rebalance_freq": 120,
+    "use_trailing": True,
+    "trail_mult": 3.4000000000000004,
+    "trail_tp": True,
+    "time_stop": 29,
+    "cooldown": 1,
+    "rebounce_block": 4,
+    "rebalance_freq": 90,
 }
 
 INITIAL_CAPITAL = 1_000_000
-SIM_START = "2021-01-01"
+SIM_START = "2025-01-01"
 WARMUP_DAYS = 150
 BENCHMARK = "SPY"
 
@@ -1062,52 +1062,110 @@ def _attach_benchmark(daily_values: list[dict], benchmark_series: pd.Series | No
         row["benchmark"] = round(float(value), 2) if pd.notna(value) else None
 
 
+def _annual_windows(start: str, end: str) -> list[tuple[int, str, str, str, str]]:
+    start_ts = pd.Timestamp(start)
+    end_ts = pd.Timestamp(end)
+    windows = []
+
+    for year in range(start_ts.year, end_ts.year + 1):
+        prev_start = f"{year - 1}-01-01"
+        prev_end = f"{year - 1}-12-31"
+        trade_start_ts = max(pd.Timestamp(f"{year}-01-01"), start_ts)
+        trade_end_ts = min(pd.Timestamp(f"{year}-12-31"), end_ts)
+        if trade_start_ts > trade_end_ts:
+            continue
+        windows.append(
+            (
+                year,
+                prev_start,
+                prev_end,
+                trade_start_ts.strftime("%Y-%m-%d"),
+                trade_end_ts.strftime("%Y-%m-%d"),
+            )
+        )
+
+    return windows
+
+
 def run_full_strategy(params: dict | None = None) -> dict:
     params = dict(DEFAULT_PARAMS if params is None else params)
     params.setdefault("rebalance_freq", DEFAULT_PARAMS["rebalance_freq"])
 
     end_date = datetime.today().strftime("%Y-%m-%d")
-
-    logger.info("Running notebook-faithful universe backtest")
-    universe = MACDBBATRStrategy(
-        TICKERS,
-        SIM_START,
-        end_date,
-        params=params,
-        rebalance_freq=int(params["rebalance_freq"]),
-        interval="1d",
-        capital=INITIAL_CAPITAL,
-        transaction_cost=0.0,
-        verbose=False,
-        leverage=0.0,
-    )
-    universe_portfolio = universe.run_strategy()
-
     from optimizer import optimize_portfolio
+    logger.info("Running notebook-faithful walk-forward backtest")
 
-    opt = optimize_portfolio(universe.stock_equity_history, risk_free=0.0, top_k=6)
-    selected_tickers = opt.get("selected_tickers") or list(TICKERS)
-    allocations = opt.get("allocations") or {t: round(1 / len(selected_tickers), 4) for t in selected_tickers}
+    running_capital = float(INITIAL_CAPITAL)
+    combined_portfolios: list[pd.DataFrame] = []
+    combined_trades: list[dict] = []
+    combined_signals: list[dict] = []
 
-    logger.info("Running notebook-faithful allocated backtest")
-    deployed = MACDBBATRStrategy(
-        selected_tickers,
-        SIM_START,
-        end_date,
-        params=params,
-        rebalance_freq=int(params["rebalance_freq"]),
-        interval="1d",
-        capital=INITIAL_CAPITAL,
-        transaction_cost=0.0,
-        allocations=allocations,
-        verbose=False,
-        leverage=0.0,
-    )
-    deployed_portfolio = deployed.run_strategy()
+    latest_universe = None
+    latest_universe_portfolio = None
+    latest_deployed = None
+    selected_tickers = list(TICKERS)
+    allocations = {t: round(1 / len(selected_tickers), 4) for t in selected_tickers}
+
+    for year, prev_start, prev_end, trade_start, trade_end in _annual_windows(SIM_START, end_date):
+        logger.info(
+            "Walk-forward %s: allocate from %s -> %s, trade %s -> %s",
+            year, prev_start, prev_end, trade_start, trade_end,
+        )
+
+        universe = MACDBBATRStrategy(
+            TICKERS,
+            prev_start,
+            prev_end,
+            params=params,
+            rebalance_freq=int(params["rebalance_freq"]),
+            interval="1d",
+            capital=running_capital,
+            transaction_cost=0.0,
+            verbose=False,
+            leverage=0.0,
+        )
+        universe_portfolio = universe.run_strategy()
+
+        opt = optimize_portfolio(universe.stock_equity_history, risk_free=0.0, top_k=6)
+        selected_tickers = opt.get("selected_tickers") or list(TICKERS)
+        allocations = opt.get("allocations") or {t: round(1 / len(selected_tickers), 4) for t in selected_tickers}
+
+        deployed = MACDBBATRStrategy(
+            selected_tickers,
+            trade_start,
+            trade_end,
+            params=params,
+            rebalance_freq=int(params["rebalance_freq"]),
+            interval="1d",
+            capital=running_capital,
+            transaction_cost=0.0,
+            allocations=allocations,
+            verbose=False,
+            leverage=0.0,
+        )
+        deployed_portfolio = deployed.run_strategy()
+        if deployed_portfolio is None or deployed_portfolio.empty:
+            logger.warning("Walk-forward segment %s returned empty deployed portfolio", year)
+            continue
+
+        combined_portfolios.append(deployed_portfolio)
+        combined_trades.extend(deployed.closed_trades)
+        combined_signals.extend(deployed.signals)
+        running_capital = float(deployed_portfolio["PortfolioValue"].iloc[-1])
+
+        latest_universe = universe
+        latest_universe_portfolio = universe_portfolio
+        latest_deployed = deployed
+
+    if not combined_portfolios or latest_deployed is None or latest_universe is None:
+        raise RuntimeError("Walk-forward backtest produced no portfolio data.")
+
+    combined_df = pd.concat(combined_portfolios)
+    combined_df = combined_df[~combined_df.index.duplicated(keep="last")].sort_index()
 
     daily_values = [
         {"date": idx, "portfolio": round(float(value), 2)}
-        for idx, value in deployed_portfolio["PortfolioValue"].items()
+        for idx, value in combined_df["PortfolioValue"].items()
     ]
 
     benchmark_series = _run_buy_and_hold_benchmark(BENCHMARK, SIM_START, end_date, INITIAL_CAPITAL)
@@ -1116,22 +1174,22 @@ def run_full_strategy(params: dict | None = None) -> dict:
     start_ts = pd.Timestamp(SIM_START)
     return {
         "daily_values": daily_values,
-        "trades": deployed.closed_trades,
-        "signals": deployed.signals,
-        "final_positions": deployed.final_positions,
-        "final_equity": dict(deployed.capital),
-        "stock_returns": _price_returns_from_data(deployed.all_data, start_ts),
-        "price_returns": _price_returns_from_data(deployed.all_data, start_ts),
-        "stock_equity_history": deployed.stock_equity_history,
-        "optimizer_history": universe.stock_equity_history,
-        "current_prices": _build_current_prices(deployed.all_data),
-        "current_atr": _build_current_atr(deployed.all_data),
-        "price_data": deployed.all_data,
+        "trades": combined_trades,
+        "signals": combined_signals,
+        "final_positions": latest_deployed.final_positions,
+        "final_equity": dict(latest_deployed.capital),
+        "stock_returns": _price_returns_from_data(latest_deployed.all_data, start_ts),
+        "price_returns": _price_returns_from_data(latest_deployed.all_data, start_ts),
+        "stock_equity_history": latest_deployed.stock_equity_history,
+        "optimizer_history": latest_universe.stock_equity_history,
+        "current_prices": _build_current_prices(latest_deployed.all_data),
+        "current_atr": _build_current_atr(latest_deployed.all_data),
+        "price_data": latest_deployed.all_data,
         "bench_df": benchmark_series,
         "initial_capital": INITIAL_CAPITAL,
         "params": params,
         "tickers": selected_tickers,
         "selected_tickers": selected_tickers,
         "optimizer_allocations": allocations,
-        "optimizer_universe_portfolio": universe_portfolio,
+        "optimizer_universe_portfolio": latest_universe_portfolio,
     }

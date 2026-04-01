@@ -39,10 +39,19 @@ import { Pause, Filter, Radio } from 'lucide-react';
 const getSignedCurrency = (value) => `${value >= 0 ? '+' : '-'}$${Math.abs(value).toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
 const getSignedPercent = (value) => `${value >= 0 ? '+' : '-'}${Math.abs(value).toFixed(2)}%`;
 const getMetricColor = (value) => (value >= 0 ? 'text-profit' : 'text-loss');
+const EQUITY_RANGES = ['1D', '1W', '1M', '3M', 'ALL'];
+const RANGE_POINTS = {
+  '1D': 2,
+  '1W': 5,
+  '1M': 21,
+  '3M': 63,
+  ALL: Infinity,
+};
 
 export default function Monitoring() {
   const [selectedSignal, setSelectedSignal] = useState(null);
   const [live, setLive] = useState(null);
+  const [equityRange, setEquityRange] = useState('1D');
 
   useEffect(() => {
     fetchMonitoring().then(setLive).catch(() => {});
@@ -58,6 +67,14 @@ export default function Monitoring() {
   const volatilityMetrics = live?.volatilityMetrics ?? synthetic.volatilityMetrics;
   const drawdownMetrics  = live?.drawdownMetrics  ?? synthetic.drawdownMetrics;
   const sectorExposure   = live?.sectorExposure   ?? synthetic.sectorExposure;
+  const rangeLimit = RANGE_POINTS[equityRange] ?? Infinity;
+  const filteredEquity = Number.isFinite(rangeLimit)
+    ? intradayEquity.slice(-rangeLimit)
+    : intradayEquity;
+  const equityData = filteredEquity.length >= 2
+    ? filteredEquity
+    : intradayEquity.slice(-Math.min(2, intradayEquity.length));
+  const equityXAxisInterval = equityData.length <= 8 ? 0 : equityData.length <= 24 ? 3 : 11;
 
   return (
     <div className="space-y-6">
@@ -280,15 +297,21 @@ export default function Monitoring() {
             - value {number}: portfolio value in USD at that timestamp
           SOURCE: Real-time portfolio tracker (snapshot every ~5 min)
           CHART TYPE: LineChart from Recharts
-          TIME RANGE BUTTONS: 1D (default), 1W, 1M, 3M, ALL
-            TODO: Wire buttons to fetch different time ranges from backend
+          TIME RANGE BUTTONS: 1D, 1W, 1M, 3M, ALL
           ================================================================ */}
       <div className="bg-bg-surface border border-border rounded-lg p-4">
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-sm font-semibold text-text-primary">Equity Curve (Live)</h2>
           <div className="flex gap-1">
-            {['1D', '1W', '1M', '3M', 'ALL'].map(t => (
-              <button key={t} className={`px-2 py-0.5 rounded text-xs ${t === '1D' ? 'bg-accent/15 text-accent' : 'text-text-secondary hover:text-text-primary'}`}>
+            {EQUITY_RANGES.map(t => (
+              <button
+                key={t}
+                type="button"
+                onClick={() => setEquityRange(t)}
+                className={`px-2 py-0.5 rounded text-xs transition-colors ${
+                  t === equityRange ? 'bg-accent/15 text-accent' : 'text-text-secondary hover:text-text-primary'
+                }`}
+              >
                 {t}
               </button>
             ))}
@@ -296,8 +319,8 @@ export default function Monitoring() {
         </div>
         <div className="h-56">
           <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={intradayEquity}>
-              <XAxis dataKey="time" tick={{ fontSize: 10, fill: '#8B949E' }} interval={11} />
+            <LineChart data={equityData}>
+              <XAxis dataKey="time" tick={{ fontSize: 10, fill: '#8B949E' }} interval={equityXAxisInterval} />
               <YAxis tick={{ fontSize: 10, fill: '#8B949E' }} tickFormatter={v => `$${(v / 1000).toFixed(0)}k`} domain={['dataMin - 2000', 'dataMax + 2000']} />
               <Tooltip contentStyle={{ backgroundColor: '#1C2128', border: '1px solid #30363D', borderRadius: 8, fontSize: 12, color: '#E6EDF3' }} formatter={v => [`$${v.toLocaleString()}`]} />
               <Line type="monotone" dataKey="value" stroke="#58A6FF" strokeWidth={2} dot={false} />

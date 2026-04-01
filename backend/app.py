@@ -31,6 +31,7 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 CORS(app, origins=["http://localhost:5173", "http://127.0.0.1:5173"])
+APP_START = pd.Timestamp("2025-01-01")
 
 # ── In-memory cache ───────────────────────────────────────────────────────────
 
@@ -43,6 +44,52 @@ _cache: dict = {
     "tstats":     None,
     "loaded_at":  None,
 }
+
+
+def _window_daily_values(results: dict) -> list[dict]:
+    return [
+        row for row in results.get("daily_values", [])
+        if pd.Timestamp(row["date"]) >= APP_START
+    ]
+
+
+def _window_benchmark(bench_df):
+    if bench_df is None:
+        return None
+    if isinstance(bench_df, pd.Series):
+        return bench_df[bench_df.index >= APP_START]
+    if hasattr(bench_df, "loc"):
+        return bench_df.loc[bench_df.index >= APP_START]
+    return bench_df
+
+
+def _window_trades(results: dict) -> list[dict]:
+    out = []
+    for trade in results.get("trades", []):
+        exit_date = trade.get("exit_date")
+        if exit_date is None or pd.Timestamp(exit_date) >= APP_START:
+            out.append(trade)
+    return out
+
+
+def _window_signals(results: dict) -> list[dict]:
+    out = []
+    for signal in results.get("signals", []):
+        signal_date = signal.get("date")
+        signal_ts = pd.to_datetime(signal_date, errors="coerce")
+        if signal_date is None or pd.isna(signal_ts) or signal_ts >= APP_START:
+            out.append(signal)
+    return out
+
+
+def _window_price_returns(results: dict) -> dict:
+    out = {}
+    for ticker, series in (results.get("price_returns", {}) or {}).items():
+        if hasattr(series, "index"):
+            out[ticker] = series[series.index >= APP_START]
+        else:
+            out[ticker] = series
+    return out
 
 
 # ── Background data loader ────────────────────────────────────────────────────
@@ -59,12 +106,20 @@ def _load():
         _cache["opt"] = opt
 
         logger.info("=== Computing performance metrics ===")
-        metrics = compute_metrics(
-            results["daily_values"],
-            results["initial_capital"],
-            results.get("bench_df"),
+        app_daily_values = _window_daily_values(results)
+        app_benchmark = _window_benchmark(results.get("bench_df"))
+        app_trades = _window_trades(results)
+        app_initial_capital = (
+            float(app_daily_values[0]["portfolio"])
+            if app_daily_values else results["initial_capital"]
         )
-        tstats  = trade_stats(results["trades"])
+
+        metrics = compute_metrics(
+            app_daily_values,
+            app_initial_capital,
+            app_benchmark,
+        )
+        tstats  = trade_stats(app_trades)
         metrics.update(tstats)
         _cache["metrics"]   = metrics
         _cache["tstats"]    = tstats
@@ -109,8 +164,8 @@ def _format_stocks(opt: dict, current_prices: dict, results: dict) -> list:
 
         # Beta: approximate from stock returns
         beta = 1.0
-        sr = results.get("price_returns", {}).get(ticker)
-        bench_df = results.get("bench_df")
+        sr = _window_price_returns(results).get(ticker)
+        bench_df = _window_benchmark(results.get("bench_df"))
         if sr is not None and bench_df is not None and len(bench_df) > 10:
             if hasattr(bench_df, "columns") and "close" in bench_df.columns:
                 br = bench_df["close"].pct_change().dropna()
@@ -215,7 +270,7 @@ def _build_ai_context() -> dict:
     results = _cache["results"]
     metrics = _cache.get("metrics", {}) or {}
     opt = _cache.get("opt", {}) or {}
-    dv = results.get("daily_values", [])
+    dv = _window_daily_values(results)
     if not dv:
         return {"metrics": metrics}
 
@@ -273,7 +328,7 @@ def _build_ai_context() -> dict:
             "type": signal["type"],
             "detail": (signal.get("detail") or "")[:140],
         }
-        for signal in _format_signals(results.get("signals", []), n=5)
+        for signal in _format_signals(_window_signals(results), n=5)
     ]
 
     return {
@@ -342,20 +397,23 @@ def dashboard():
     results = _cache["results"]
     opt     = _cache["opt"]
     metrics = _cache["metrics"]
-    dv      = results["daily_values"]
+    dv      = _window_daily_values(results)
     total   = dv[-1]["portfolio"]
     prev    = dv[-2]["portfolio"] if len(dv) >= 2 else total
 
     day_pnl     = round(total - prev, 2)
     day_pnl_pct = round((total / prev - 1) * 100, 2) if prev > 0 else 0
 
-    signals  = _format_signals(results["signals"], n=10)
+    signals  = _format_signals(_window_signals(results), n=10)
     stocks   = _format_stocks(opt, results["current_prices"], results)
-    sparks   = sparkline_data(dv, results["trades"], n=12)
+    sparks   = sparkline_data(dv, _window_trades(results), n=12)
 
-    # Equity curve: full backtest history from SIM_START to today
+    chart_rows = dv
+
+    # Equity curve: dashboard display from 2025-01-01 to today
     equity_curve = []
-    for row in dv:
+    peak = None
+    for row in chart_rows:
         entry = {
             "date":      pd.Timestamp(row["date"]).strftime("%Y-%m-%d"),
             "portfolio": row["portfolio"],
@@ -365,9 +423,8 @@ def dashboard():
         else:
             entry["benchmark"] = row["portfolio"]   # fallback
 
-        # drawdown
-        peak = max(r["portfolio"] for r in dv[:dv.index(row) + 1])
-        entry["drawdown"] = round((row["portfolio"] - peak) / peak * 100, 1)
+        peak = row["portfolio"] if peak is None else max(peak, row["portfolio"])
+        entry["drawdown"] = round((row["portfolio"] - peak) / peak * 100, 1) if peak else 0.0
         equity_curve.append(entry)
 
     # Positions summary
@@ -375,7 +432,7 @@ def dashboard():
     n_long  = sum(1 for p in fp.values() if p["direction"] == "LONG")
     n_short = sum(1 for p in fp.values() if p["direction"] == "SHORT")
 
-    alerts = ai_service.generate_alerts(metrics, fp, results["trades"],
+    alerts = ai_service.generate_alerts(metrics, fp, _window_trades(results),
                                         results["current_atr"])
 
     # Sharpe trend
@@ -408,7 +465,7 @@ def portfolio():
 
     results = _cache["results"]
     opt     = _cache["opt"]
-    dv      = results["daily_values"]
+    dv      = _window_daily_values(results)
 
     stocks         = _format_stocks(opt, results["current_prices"], results)
     sector_bd      = _sector_breakdown(stocks)
@@ -448,19 +505,19 @@ def monitoring():
 
     results = _cache["results"]
     metrics = _cache["metrics"]
-    dv      = results["daily_values"]
+    dv      = _window_daily_values(results)
     fp      = results["final_positions"]
     cp      = results["current_prices"]
     total   = dv[-1]["portfolio"] if dv else INITIAL_CAPITAL
 
-    signals   = _format_signals(results["signals"], n=30)
+    signals   = _format_signals(_window_signals(results), n=30)
     positions = _format_positions(fp, cp, results["current_atr"])
 
-    # Intraday equity: last 30 trading days labelled as time points
+    # Monitoring equity history: app window from 2025-01-01 to today
     intraday = [
         {"time": pd.Timestamp(row["date"]).strftime("%b %d"),
          "value": row["portfolio"]}
-        for row in dv[-30:]
+        for row in dv
     ]
 
     # Unrealized P&L
@@ -520,7 +577,7 @@ def alerts():
     metrics = _cache["metrics"]
     a = ai_service.generate_alerts(
         metrics, results["final_positions"],
-        results["trades"], results["current_atr"]
+        _window_trades(results), results["current_atr"]
     )
     return jsonify({"alerts": a})
 

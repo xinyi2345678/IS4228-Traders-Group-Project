@@ -1,0 +1,44 @@
+{
+  "start": "2025-01-02",
+  "end": "2026-03-30",
+  "start_capital": 1000000.0,
+  "end_value": 1183193.79,
+  "total_return_pct": 18.32,
+  "cagr_pct": 14.56,
+  "sharpe": 1.6485,
+  "max_drawdown_pct": -6.64,
+  "current_drawdown_pct": -1.12,
+  "study_best_value": 3.0508,
+  "train_avg_sharpe": 1.7859,
+  "deploy_avg_sharpe": 1.265,
+  "deploy_total_sharpe": 1.6485,
+  "train_year_sharpes": {
+    "2018": 2.3341,
+    "2019": 1.6543,
+    "2020": 3.259,
+    "2021": 1.7921,
+    "2022": -0.8097,
+    "2023": 2.1029,
+    "2024": 2.1683
+  },
+  "deploy_year_sharpes": {
+    "2025": 1.885,
+    "2026": 0.6449
+  },
+  "selected_tickers": [
+    "MSFT",
+    "AAPL",
+    "BRK-B",
+    "GOOGL",
+    "META",
+    "NVDA"
+  ],
+  "allocations": {
+    "MSFT": 0.2399,
+    "AAPL": 0.206,
+    "BRK-B": 0.1686,
+    "GOOGL": 0.1632,
+    "META": 0.1386,
+    "NVDA": 0.0838
+  }
+}

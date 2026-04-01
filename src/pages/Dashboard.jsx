@@ -166,7 +166,7 @@ export default function Dashboard() {
         <KPICard
           label="Total Portfolio Value"
           value={`$${portfolioValue.toLocaleString()}`}
-          subtext={`${getSignedPercent(totalReturn)} Since Start`}
+          subtext={`${getSignedPercent(totalReturn)} Since 2025`}
           subtextColor={getPercentColor(totalReturn)}
           secondarySubtext={`${getSignedPercent(mtdPercent)} MTD`}
           secondarySubtextColor={getPercentColor(mtdPercent)}

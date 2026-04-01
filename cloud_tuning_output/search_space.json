@@ -1,0 +1,139 @@
+{
+  "macd_fast": {
+    "kind": "int",
+    "low": 10,
+    "high": 20
+  },
+  "macd_slow": {
+    "kind": "int",
+    "low": 35,
+    "high": 44
+  },
+  "macd_signal": {
+    "kind": "int",
+    "low": 5,
+    "high": 10
+  },
+  "macd_std_window": {
+    "kind": "int",
+    "low": 70,
+    "high": 100
+  },
+  "macd_k": {
+    "kind": "float",
+    "low": 1.0,
+    "high": 2.0,
+    "step": 0.05
+  },
+  "macd_k_mid": {
+    "kind": "float",
+    "low": 0.5,
+    "high": 1.0,
+    "step": 0.05
+  },
+  "bb_window": {
+    "kind": "int",
+    "low": 14,
+    "high": 25
+  },
+  "bb_std_dev": {
+    "kind": "float",
+    "low": 1.4,
+    "high": 2.5,
+    "step": 0.05
+  },
+  "atr_window": {
+    "kind": "int",
+    "low": 10,
+    "high": 20
+  },
+  "tp_mult_lm": {
+    "kind": "float",
+    "low": 3.5,
+    "high": 6.0,
+    "step": 0.1
+  },
+  "sl_mult_lm": {
+    "kind": "float",
+    "low": 1.0,
+    "high": 2.2,
+    "step": 0.05
+  },
+  "tp_mult_sm": {
+    "kind": "float",
+    "low": 3.0,
+    "high": 7.0,
+    "step": 0.1
+  },
+  "sl_mult_sm": {
+    "kind": "float",
+    "low": 1.0,
+    "high": 2.0,
+    "step": 0.05
+  },
+  "tp_mult_lr": {
+    "kind": "float",
+    "low": 8.0,
+    "high": 17.0,
+    "step": 0.2
+  },
+  "sl_mult_lr": {
+    "kind": "float",
+    "low": 2.0,
+    "high": 5.0,
+    "step": 0.1
+  },
+  "tp_mult_sr": {
+    "kind": "float",
+    "low": 3.0,
+    "high": 7.0,
+    "step": 0.1
+  },
+  "sl_mult_sr": {
+    "kind": "float",
+    "low": 1.5,
+    "high": 3.5,
+    "step": 0.1
+  },
+  "use_trailing": {
+    "kind": "categorical",
+    "choices": [
+      true,
+      false
+    ]
+  },
+  "trail_mult": {
+    "kind": "float",
+    "low": 1.5,
+    "high": 4.0,
+    "step": 0.1
+  },
+  "trail_tp": {
+    "kind": "categorical",
+    "choices": [
+      true,
+      false
+    ]
+  },
+  "time_stop": {
+    "kind": "int",
+    "low": 0,
+    "high": 30
+  },
+  "cooldown": {
+    "kind": "int",
+    "low": 0,
+    "high": 5
+  },
+  "rebounce_block": {
+    "kind": "int",
+    "low": 0,
+    "high": 6
+  },
+  "rebalance_freq": {
+    "kind": "int",
+    "low": 30,
+    "high": 180,
+    "step": 30
+  }
+}
