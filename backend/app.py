@@ -473,6 +473,7 @@ def portfolio():
     frontier       = opt.get("frontier", [])
     port_metrics   = opt.get("portfolio_metrics", {})
     indiv          = opt.get("individual_metrics", {})
+    corr_matrix    = opt.get("corr_matrix", [])
 
     individual_stocks = [
         {"ticker": t, "volatility": v["volatility"], "return": v["return"]}
@@ -494,6 +495,7 @@ def portfolio():
         "individualStocks": individual_stocks,
         "currentPortfolio": current_portfolio,
         "optimizationMetrics": port_metrics,
+        "correlationMatrix": corr_matrix,
     })
 
 

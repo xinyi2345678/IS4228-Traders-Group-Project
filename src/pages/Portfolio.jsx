@@ -27,9 +27,8 @@ import * as synthetic from '../data/synthetic';
 import { fetchPortfolio } from '../services/api';
 import {
   ScatterChart, Scatter, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
-  PieChart, Pie, Cell, BarChart, Bar,
+  PieChart, Pie, Cell, BarChart, Bar, ComposedChart, Line, Legend,
 } from 'recharts';
-import { Play, RotateCcw } from 'lucide-react';
 
 const SECTOR_COLORS = {
   Technology: '#58A6FF',
@@ -70,7 +69,6 @@ export default function Portfolio() {
   const portfolioValue    = live?.portfolioValue    ?? synthetic.portfolioValue;
   const optMetrics        = live?.optimizationMetrics ?? {};
 
-  const lastRun = live ? new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—';
   const stockScatter = individualStocks.map(s => ({
     volatility: s.volatility,
     return: s.return,
@@ -79,7 +77,24 @@ export default function Portfolio() {
   const currentPortfolioPoint = currentPortfolio?.volatility != null && currentPortfolio?.return != null
     ? [currentPortfolio]
     : [];
-
+  const riskMap = Object.fromEntries(riskContribution.map((row) => [row.ticker, row.risk]));
+  const allocationVsRisk = stocks.map((stock) => ({
+    ticker: stock.ticker,
+    weight: stock.weight,
+    risk: riskMap[stock.ticker] ?? 0,
+  }));
+  const correlationData = stocks.map((stock) => ({
+    ticker: stock.ticker,
+    corr: stock.corrToPort ?? 0,
+  }));
+  const returnVolData = stocks.map((stock) => ({
+    ticker: stock.ticker,
+    return: stock.annReturn ?? 0,
+    volatility: stock.volatility ?? 0,
+  }));
+  const topHolding = stocks[0];
+  const concentration = stocks.reduce((sum, stock) => sum + (stock.weight / 100) ** 2, 0) * 100;
+  const riskBudgetGap = allocationVsRisk.reduce((sum, row) => sum + Math.abs(row.weight - row.risk), 0) / 2;
   const allVolatility = [
     ...efficientFrontier.map(p => p.volatility),
     ...stockScatter.map(s => s.volatility),
@@ -101,40 +116,6 @@ export default function Portfolio() {
   return (
     <div className="space-y-6">
       <h1 className="text-xl font-semibold text-text-primary">Portfolio Distribution</h1>
-
-      {/* ================================================================
-          CONTROL BAR
-          COMPONENT: Portfolio Optimization
-          PURPOSE: Controls for the portfolio optimizer.
-          ACTIONS:
-            - Dropdown: Select optimization strategy (Max Sharpe / Min Variance / Risk Parity)
-            - "Run Optimizer" button: Triggers re-optimization of portfolio weights
-            - "Reset" button: Reverts to previous/default allocation
-            - Timestamp: Shows when optimizer was last run
-          TODO: Wire "Run Optimizer" to backend optimizer API
-          TODO: Wire dropdown selection to optimizer parameter
-          ================================================================ */}
-      <div className="bg-bg-surface border border-border rounded-lg p-4 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <span className="text-text-secondary text-sm">Optimization:</span>
-          {/* DATA: List of optimization strategies supported by backend */}
-          <select className="bg-bg-elevated border border-border rounded px-3 py-1.5 text-text-primary text-sm">
-            <option>Max Sharpe</option>
-            <option>Min Variance</option>
-            <option>Risk Parity</option>
-          </select>
-        </div>
-        <div className="flex items-center gap-3">
-          <button className="flex items-center gap-1.5 bg-accent/15 text-accent text-sm px-3 py-1.5 rounded hover:bg-accent/25 transition-colors">
-            <Play size={14} /> Run Optimizer
-          </button>
-          <button className="flex items-center gap-1.5 bg-bg-elevated text-text-secondary text-sm px-3 py-1.5 rounded border border-border hover:text-text-primary transition-colors">
-            <RotateCcw size={14} /> Reset
-          </button>
-          {/* DATA: {string} last_run_timestamp - from optimizer run history */}
-          <span className="text-text-secondary text-xs">Last run: {lastRun}</span>
-        </div>
-      </div>
 
       {/* ================================================================
           ROW 1: TREEMAP + EFFICIENT FRONTIER + OPTIMIZATION SUMMARY
@@ -250,7 +231,9 @@ export default function Portfolio() {
               { label: 'Target Sharpe',      value: optMetrics.sharpe     != null ? optMetrics.sharpe.toFixed(2)     : '—',                    color: 'text-accent' },
               { label: 'Expected Return',    value: optMetrics.return     != null ? `${optMetrics.return.toFixed(1)}%`    : `${currentPortfolio.return}%`,   color: 'text-profit' },
               { label: 'Portfolio Volatility', value: optMetrics.volatility != null ? `${optMetrics.volatility.toFixed(1)}%` : `${currentPortfolio.volatility}%`, color: 'text-text-primary' },
-              { label: 'Max Drawdown',       value: '—',                                                                color: 'text-loss' },
+              { label: 'Top Holding',        value: topHolding ? `${topHolding.ticker} ${topHolding.weight}%` : '—',    color: 'text-warning' },
+              { label: 'Concentration (HHI)', value: `${concentration.toFixed(1)}`,                                      color: 'text-text-primary' },
+              { label: 'Risk Budget Gap',    value: `${riskBudgetGap.toFixed(1)} pts`,                                   color: 'text-loss' },
             ].map(item => (
               <div key={item.label} className="flex justify-between items-center">
                 <span className="text-text-secondary text-sm">{item.label}</span>
@@ -385,6 +368,71 @@ export default function Portfolio() {
               </BarChart>
             </ResponsiveContainer>
           </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-4">
+        <div className="bg-bg-surface border border-border rounded-lg p-4">
+          <h2 className="text-sm font-semibold text-text-primary mb-3">Weight vs Risk Budget</h2>
+          <div className="h-60">
+            <ResponsiveContainer width="100%" height="100%">
+              <ComposedChart data={allocationVsRisk} margin={{ top: 8, right: 12, bottom: 8, left: 4 }}>
+                <CartesianGrid stroke="#30363D" strokeDasharray="3 3" vertical={false} />
+                <XAxis dataKey="ticker" tick={{ fontSize: 10, fill: '#8B949E' }} />
+                <YAxis tick={{ fontSize: 10, fill: '#8B949E' }} tickFormatter={(v) => `${v}%`} />
+                <Tooltip
+                  contentStyle={{ backgroundColor: '#1C2128', border: '1px solid #30363D', borderRadius: 8, fontSize: 12, color: '#E6EDF3' }}
+                  formatter={(value, name) => [`${Number(value).toFixed(1)}%`, name === 'weight' ? 'Weight' : 'Risk Contribution']}
+                />
+                <Legend wrapperStyle={{ fontSize: 11, color: '#8B949E' }} />
+                <Bar dataKey="weight" fill="#58A6FF" radius={[4, 4, 0, 0]} name="weight" />
+                <Line type="monotone" dataKey="risk" stroke="#F85149" strokeWidth={2} dot={{ r: 3 }} name="risk" />
+              </ComposedChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+
+        <div className="bg-bg-surface border border-border rounded-lg p-4">
+          <h2 className="text-sm font-semibold text-text-primary mb-3">Correlation to Portfolio</h2>
+          <div className="h-60">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={correlationData} layout="vertical" margin={{ left: 28, right: 12 }}>
+                <CartesianGrid stroke="#30363D" strokeDasharray="3 3" horizontal={false} />
+                <XAxis type="number" domain={[-1, 1]} tick={{ fontSize: 10, fill: '#8B949E' }} />
+                <YAxis dataKey="ticker" type="category" tick={{ fontSize: 11, fill: '#E6EDF3' }} width={40} />
+                <Tooltip
+                  contentStyle={{ backgroundColor: '#1C2128', border: '1px solid #30363D', borderRadius: 8, fontSize: 12, color: '#E6EDF3' }}
+                  formatter={(value) => [Number(value).toFixed(3), 'Correlation']}
+                />
+                <Bar dataKey="corr" radius={[0, 4, 4, 0]}>
+                  {correlationData.map((row) => (
+                    <Cell key={row.ticker} fill={row.corr >= 0 ? '#3FB950' : '#F85149'} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+      </div>
+
+      <div className="bg-bg-surface border border-border rounded-lg p-4">
+        <h2 className="text-sm font-semibold text-text-primary mb-3">Stock Return vs Volatility</h2>
+        <div className="h-64">
+          <ResponsiveContainer width="100%" height="100%">
+            <ComposedChart data={returnVolData} margin={{ top: 8, right: 12, bottom: 8, left: 4 }}>
+              <CartesianGrid stroke="#30363D" strokeDasharray="3 3" vertical={false} />
+              <XAxis dataKey="ticker" tick={{ fontSize: 10, fill: '#8B949E' }} />
+              <YAxis yAxisId="left" tick={{ fontSize: 10, fill: '#8B949E' }} tickFormatter={(v) => `${v}%`} />
+              <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 10, fill: '#8B949E' }} tickFormatter={(v) => `${v}%`} />
+              <Tooltip
+                contentStyle={{ backgroundColor: '#1C2128', border: '1px solid #30363D', borderRadius: 8, fontSize: 12, color: '#E6EDF3' }}
+                formatter={(value, name) => [`${Number(value).toFixed(2)}%`, name === 'return' ? 'Annualized Return' : 'Volatility']}
+              />
+              <Legend wrapperStyle={{ fontSize: 11, color: '#8B949E' }} />
+              <Bar yAxisId="left" dataKey="return" fill="#3FB950" radius={[4, 4, 0, 0]} name="return" />
+              <Line yAxisId="right" type="monotone" dataKey="volatility" stroke="#D29922" strokeWidth={2} dot={{ r: 3 }} name="volatility" />
+            </ComposedChart>
+          </ResponsiveContainer>
         </div>
       </div>
 

@@ -224,6 +224,7 @@ def optimize_portfolio(
     selected_mu = np.array([mean_returns[symbols.index(s)] for s in selected_tickers], dtype=float)
     selected_idx = [symbols.index(s) for s in selected_tickers]
     selected_cov = cov_matrix[np.ix_(selected_idx, selected_idx)]
+    selected_returns = returns_df[selected_tickers].copy()
 
     frontier_df = _efficient_frontier(mean_returns, cov_matrix, risk_free_rate=risk_free, num_points=30)
     port_ret, port_vol, port_sharpe = _portfolio_metrics(
@@ -252,6 +253,16 @@ def optimize_portfolio(
         corr = np.corrcoef(returns_df[symbol].values, port_series.values)[0, 1]
         corr_to_port[symbol] = round(float(corr), 3) if np.isfinite(corr) else 0.0
 
+    corr_matrix = selected_returns.corr().fillna(0.0)
+    corr_matrix_records = []
+    for row_ticker in selected_tickers:
+        for col_ticker in selected_tickers:
+            corr_matrix_records.append({
+                "row": row_ticker,
+                "col": col_ticker,
+                "corr": round(float(corr_matrix.loc[row_ticker, col_ticker]), 3),
+            })
+
     return {
         "allocations": allocations,
         "selected_tickers": selected_tickers,
@@ -267,5 +278,6 @@ def optimize_portfolio(
         },
         "individual_metrics": individual_metrics,
         "corr_to_port": corr_to_port,
+        "corr_matrix": corr_matrix_records,
         "raw_weights": {s: round(float(full_weight_map[s]), 4) for s in symbols},
     }
