@@ -21,7 +21,7 @@ A full-stack quantitative trading dashboard for the top 10 large-cap U.S. stocks
 
 ### 1. Clone & install dependencies
 
-# MacOS User:
+#### macOS User:
 
 ```bash
 # Frontend dependencies
@@ -32,7 +32,7 @@ npm install
 source .venv/bin/activate
 python -m pip install flask flask-cors scipy scikit-learn ta openai python-dotenv yfinance numpy pandas
 ```
-# Windows User:
+#### Windows User:
 ```bash
 # Frontend dependencies
 npm install
@@ -60,17 +60,17 @@ OPENAI_API='your-openai-api-key-here'
 
 ### 3. Run the backend
 
-# MacOS User:
+#### macOS User:
 ```bash
 # From the project root
 PORT=5001 .venv/bin/python backend/app.py
 ```
 
-# Windows User:
+#### Windows User:
 ```bash
 # From the project root
 $env:PORT=5001 
-python backend/app.py
+python backend\app.py
 ```
 
 On first start the backend will:
@@ -96,7 +96,7 @@ curl http://localhost:5001/api/status
 
 Open a **second terminal**:
 
-# Both MacOS and Windows Users:
+#### Both macOS and Windows Users:
 ```bash
 npm run dev
 ```
