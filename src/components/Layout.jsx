@@ -80,7 +80,7 @@ export default function Layout() {
         <header className="h-14 bg-bg-surface border-b border-border flex items-center justify-between px-6 shrink-0">
           <div className="flex items-center gap-3">
             <Activity size={20} className="text-accent" />
-            <span className="font-semibold text-text-primary text-sm">Regime-Adaptive QTS</span>
+            <span className="font-semibold text-text-primary text-sm">TradeX: A Regime-Adaptive QTS</span>
           </div>
           <div className="flex items-center gap-4">
             {/* LIVE STATUS INDICATOR
