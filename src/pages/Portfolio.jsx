@@ -24,7 +24,8 @@
 
 import { useState, useEffect } from 'react';
 import * as synthetic from '../data/synthetic';
-import { fetchPortfolio } from '../services/api';
+import { fetchPortfolio, fetchStatus } from '../services/api';
+import KPICard from '../components/KPICard';
 import {
   ScatterChart, Scatter, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
   PieChart, Pie, Cell, BarChart, Bar, ComposedChart, Line, Legend,
@@ -37,6 +38,9 @@ const SECTOR_COLORS = {
   Financial: '#D29922',
   Healthcare: '#F85149',
 };
+
+const getSignedPercent = (value) => `${value >= 0 ? '+' : '-'}${Math.abs(value).toFixed(2)}%`;
+const getPercentColor = (value) => (value >= 0 ? 'text-profit' : 'text-loss');
 
 const renderSectorLabel = ({ cx, cy, midAngle, outerRadius, name, value, fill }) => {
   const RADIAN = Math.PI / 180;
@@ -57,7 +61,21 @@ export default function Portfolio() {
   const [live, setLive] = useState(null);
 
   useEffect(() => {
-    fetchPortfolio().then(setLive).catch(() => {});
+    const load = () => fetchPortfolio().then(setLive).catch(() => {});
+
+    load();
+
+    const id = setInterval(() => {
+      fetchStatus()
+        .then((status) => {
+          if (status.status === 'ready') {
+            load();
+          }
+        })
+        .catch(() => {});
+    }, 10_000);
+
+    return () => clearInterval(id);
   }, []);
 
   const stocks          = live?.stocks          ?? synthetic.stocks;
@@ -68,6 +86,7 @@ export default function Portfolio() {
   const currentPortfolio  = live?.currentPortfolio  ?? synthetic.currentPortfolio;
   const portfolioValue    = live?.portfolioValue    ?? synthetic.portfolioValue;
   const optMetrics        = live?.optimizationMetrics ?? {};
+  const marketComparison  = live?.marketComparison ?? null;
 
   const stockScatter = individualStocks.map(s => ({
     volatility: s.volatility,
@@ -116,6 +135,44 @@ export default function Portfolio() {
   return (
     <div className="space-y-6">
       <h1 className="text-xl font-semibold text-text-primary">Portfolio Distribution</h1>
+
+      <div className="grid grid-cols-4 gap-4">
+        <KPICard
+          label="Portfolio Return"
+          value={marketComparison ? getSignedPercent(marketComparison.portfolioReturn) : '—'}
+          valueColor={marketComparison ? getPercentColor(marketComparison.portfolioReturn) : 'text-text-primary'}
+          subtext={marketComparison ? `${getSignedPercent(marketComparison.portfolioMTD)} MTD` : 'Since 2025'}
+          subtextColor={marketComparison ? getPercentColor(marketComparison.portfolioMTD) : 'text-text-secondary'}
+          secondarySubtext={marketComparison ? `${getSignedPercent(marketComparison.portfolioDayChangePct)} vs prior close` : undefined}
+          secondarySubtextColor={marketComparison ? getPercentColor(marketComparison.portfolioDayChangePct) : undefined}
+        />
+        <KPICard
+          label="SPY Benchmark"
+          value={marketComparison ? getSignedPercent(marketComparison.benchmarkReturn) : '—'}
+          valueColor={marketComparison ? getPercentColor(marketComparison.benchmarkReturn) : 'text-text-primary'}
+          subtext={marketComparison ? `${getSignedPercent(marketComparison.benchmarkMTD)} MTD` : 'Market baseline'}
+          subtextColor={marketComparison ? getPercentColor(marketComparison.benchmarkMTD) : 'text-text-secondary'}
+          secondarySubtext={marketComparison ? `${getSignedPercent(marketComparison.benchmarkDayChangePct)} vs prior close` : undefined}
+          secondarySubtextColor={marketComparison ? getPercentColor(marketComparison.benchmarkDayChangePct) : undefined}
+        />
+        <KPICard
+          label="Excess Return"
+          value={marketComparison ? getSignedPercent(marketComparison.excessReturn) : '—'}
+          valueColor={marketComparison ? getPercentColor(marketComparison.excessReturn) : 'text-text-primary'}
+          subtext={marketComparison ? `${getSignedPercent(marketComparison.mtdExcessReturn)} MTD spread` : 'Portfolio - SPY'}
+          subtextColor={marketComparison ? getPercentColor(marketComparison.mtdExcessReturn) : 'text-text-secondary'}
+          secondarySubtext={marketComparison ? `${getSignedPercent(marketComparison.dayExcessReturn)} daily spread` : undefined}
+          secondarySubtextColor={marketComparison ? getPercentColor(marketComparison.dayExcessReturn) : undefined}
+        />
+        <KPICard
+          label="Market Sensitivity"
+          value={marketComparison ? `${marketComparison.beta.toFixed(2)} beta` : '—'}
+          subtext={marketComparison ? `${marketComparison.alpha >= 0 ? '+' : ''}${marketComparison.alpha.toFixed(2)}% alpha` : 'Risk-adjusted vs SPY'}
+          subtextColor={marketComparison ? getPercentColor(marketComparison.alpha) : 'text-text-secondary'}
+          secondarySubtext={marketComparison ? `Max DD ${marketComparison.portfolioMaxDrawdown.toFixed(2)}% vs SPY ${marketComparison.benchmarkMaxDrawdown.toFixed(2)}%` : undefined}
+          secondarySubtextColor="text-text-secondary"
+        />
+      </div>
 
       {/* ================================================================
           ROW 1: TREEMAP + EFFICIENT FRONTIER + OPTIMIZATION SUMMARY

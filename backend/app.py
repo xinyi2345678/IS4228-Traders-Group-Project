@@ -92,6 +92,76 @@ def _window_price_returns(results: dict) -> dict:
     return out
 
 
+def _pct_change(current: float | None, previous: float | None) -> float:
+    if current is None or previous in (None, 0):
+        return 0.0
+    return round(((float(current) / float(previous)) - 1) * 100, 2)
+
+
+def _build_market_comparison(daily_values: list[dict], metrics: dict) -> dict:
+    benchmark_rows = [row for row in daily_values if row.get("benchmark") is not None]
+    if not daily_values or not benchmark_rows:
+        return {
+            "portfolioReturn": round(metrics.get("totalReturn", 0), 2),
+            "benchmarkReturn": 0.0,
+            "excessReturn": round(metrics.get("totalReturn", 0), 2),
+            "portfolioDayChangePct": 0.0,
+            "benchmarkDayChangePct": 0.0,
+            "dayExcessReturn": 0.0,
+            "portfolioMTD": round(metrics.get("mtdPct", 0), 2),
+            "benchmarkMTD": 0.0,
+            "mtdExcessReturn": round(metrics.get("mtdPct", 0), 2),
+            "alpha": round(metrics.get("alpha", 0), 3),
+            "beta": round(metrics.get("beta", 0), 3),
+            "portfolioMaxDrawdown": round(metrics.get("maxDrawdown", 0), 2),
+            "benchmarkMaxDrawdown": 0.0,
+        }
+
+    port_latest = float(daily_values[-1]["portfolio"])
+    port_prev = float(daily_values[-2]["portfolio"]) if len(daily_values) >= 2 else port_latest
+    port_first = float(daily_values[0]["portfolio"])
+
+    bench_latest = float(benchmark_rows[-1]["benchmark"])
+    bench_prev = float(benchmark_rows[-2]["benchmark"]) if len(benchmark_rows) >= 2 else bench_latest
+    bench_first = float(benchmark_rows[0]["benchmark"])
+
+    latest_date = pd.Timestamp(benchmark_rows[-1]["date"])
+    month_start = latest_date.replace(day=1)
+
+    port_mtd_rows = [row for row in daily_values if pd.Timestamp(row["date"]) >= month_start]
+    bench_mtd_rows = [row for row in benchmark_rows if pd.Timestamp(row["date"]) >= month_start]
+
+    port_mtd_base = float(port_mtd_rows[0]["portfolio"]) if port_mtd_rows else port_first
+    bench_mtd_base = float(bench_mtd_rows[0]["benchmark"]) if bench_mtd_rows else bench_first
+
+    bench_values = np.array([float(row["benchmark"]) for row in benchmark_rows], dtype=float)
+    bench_peaks = np.maximum.accumulate(bench_values)
+    bench_dd = (bench_values - bench_peaks) / bench_peaks * 100
+
+    portfolio_return = round(metrics.get("totalReturn", _pct_change(port_latest, port_first)), 2)
+    benchmark_return = _pct_change(bench_latest, bench_first)
+    portfolio_day = _pct_change(port_latest, port_prev)
+    benchmark_day = _pct_change(bench_latest, bench_prev)
+    portfolio_mtd = round(metrics.get("mtdPct", _pct_change(port_latest, port_mtd_base)), 2)
+    benchmark_mtd = _pct_change(bench_latest, bench_mtd_base)
+
+    return {
+        "portfolioReturn": portfolio_return,
+        "benchmarkReturn": benchmark_return,
+        "excessReturn": round(portfolio_return - benchmark_return, 2),
+        "portfolioDayChangePct": portfolio_day,
+        "benchmarkDayChangePct": benchmark_day,
+        "dayExcessReturn": round(portfolio_day - benchmark_day, 2),
+        "portfolioMTD": portfolio_mtd,
+        "benchmarkMTD": benchmark_mtd,
+        "mtdExcessReturn": round(portfolio_mtd - benchmark_mtd, 2),
+        "alpha": round(metrics.get("alpha", 0), 3),
+        "beta": round(metrics.get("beta", 0), 3),
+        "portfolioMaxDrawdown": round(metrics.get("maxDrawdown", 0), 2),
+        "benchmarkMaxDrawdown": round(float(bench_dd.min()), 2) if len(bench_dd) else 0.0,
+    }
+
+
 # ── Background data loader ────────────────────────────────────────────────────
 
 def _load():
@@ -493,6 +563,7 @@ def portfolio():
 
     results = _cache["results"]
     opt     = _cache["opt"]
+    metrics = _cache["metrics"]
     dv      = _window_daily_values(results)
 
     stocks         = _format_stocks(opt, results["current_prices"], results)
@@ -513,6 +584,7 @@ def portfolio():
     }
 
     total_val = dv[-1]["portfolio"] if dv else INITIAL_CAPITAL
+    market_comparison = _build_market_comparison(dv, metrics)
 
     return jsonify({
         "portfolioValue":  round(total_val, 0),
@@ -523,6 +595,7 @@ def portfolio():
         "individualStocks": individual_stocks,
         "currentPortfolio": current_portfolio,
         "optimizationMetrics": port_metrics,
+        "marketComparison": market_comparison,
         "correlationMatrix": corr_matrix,
     })
 
