@@ -186,6 +186,89 @@ Uses **Modern Portfolio Theory** (Ledoit-Wolf shrinkage covariance + analytical 
 
 ---
 
+## System Components
+
+The trading system has 4 core components, each mapped to specific pages and sections in the dashboard:
+
+| Component | Description | Primary Page | Also Appears On |
+| --------- | ----------- | ------------ | --------------- |
+| Algorithmic Trading Strategies | Generates buy/sell signals using MACD, Bollinger Bands, and ATR. Implements 4 mechanisms: Long Momentum (LM), Short Momentum (SM), Long Reversion (LR), Short Reversion (SR). | /monitoring | / (signals table) |
+| Portfolio Optimization | Allocates capital across stocks using Modern Portfolio Theory to maximize Sharpe ratio. Outputs target weights, efficient frontier, risk contributions. | /portfolio | / (KPIs, donut chart) |
+| Real-Time Monitoring | Tracks live portfolio performance: P&L, equity curve, volatility, drawdowns, sector exposure. | /monitoring | / (equity curve, KPIs) |
+| AI-Assisted Explanations | Uses GPT to explain trades, summarize markets, generate risk alerts, and answer questions via chat. | /ai-insights | / (alerts feed) |
+
+> **Important distinction:** Algorithmic Trading decides *when* to buy/sell (signal generation). Portfolio Optimization decides *how much* to allocate (weight distribution). These are separate components that interact: the optimizer sets target weights, while the trading strategy generates entry/exit signals within those allocations.
+
+---
+
+## Page Details
+
+### 1. Dashboard Overview (`/`)
+
+| Section | Component | Data |
+| ------- | --------- | ---- |
+| KPI: Total Portfolio Value | Portfolio Optimization | `portfolioValue` |
+| KPI: Day P&L | Real-Time Monitoring | `dayPnL`, `dayPnLPercent` |
+| KPI: Sharpe Ratio | Portfolio Optimization | `sharpeRatio` |
+| KPI: Active Positions | Algorithmic Trading | `positions.long`, `positions.short` |
+| Equity Curve | Real-Time Monitoring | `equityCurve[]`: `{ date, portfolio, benchmark, drawdown }` |
+| Portfolio Donut | Portfolio Optimization | `stocks[]`: `{ ticker, weight }` |
+| Recent Signals | Algorithmic Trading | `signals[]`: `{ time, ticker, action, type, strength }` |
+| AI Alerts | AI-Assisted Explanations | `alerts[]`: `{ severity, time, title, message }` |
+
+### 2. Portfolio Distribution (`/portfolio`)
+
+| Section | Data |
+| ------- | ---- |
+| Allocation Treemap | `stocks[]`: `{ ticker, weight, sector }` |
+| Efficient Frontier | `efficientFrontier[]`: `{ volatility, return }`, `individualStocks[]`, `currentPortfolio` |
+| Optimization Summary | `sharpeRatio`, expected return %, portfolio vol %, max drawdown % |
+| Allocation Table | `stocks[]`: all fields |
+| Sector Breakdown | `sectorBreakdown[]`: `{ name, value, color }` |
+| Risk Contribution | `riskContribution[]`: `{ ticker, risk }` (sums to 100%) |
+
+### 3. Live Monitoring (`/monitoring`)
+
+| Section | Component | Data |
+| ------- | --------- | ---- |
+| KPI: Unrealized P&L | Monitoring | `monitoringKPIs.unrealizedPnL` |
+| KPI: Realized P&L | Monitoring | `monitoringKPIs.realizedPnL` |
+| KPI: Win Rate | Monitoring | `monitoringKPIs.winRate` |
+| KPI: Net Exposure | Monitoring | `monitoringKPIs.netExposure` |
+| Signal Feed | Trading | `signals[]`: `{ time, ticker, action, type, strength, detail }` |
+| Position Tracker | Trading + Monitoring | `activePositions[]`: `{ ticker, direction, entry, current, pnl, sl, tp }` |
+| Equity Curve (Live) | Monitoring | `intradayEquity[]`: `{ time, value }` |
+| Volatility Monitor | Monitoring | `volatilityMetrics`: `{ atr, vix, portfolioVol }` |
+| Drawdown Tracker | Monitoring | `drawdownMetrics`: `{ current, maxToday, maxEver }` |
+| Sector Exposure | Both | `sectorExposure[]`: `{ sector, exposure }` |
+
+### 4. AI-Assisted Insights (`/ai-insights`)
+
+| Section | Tab | Data |
+| ------- | --- | ---- |
+| Trade Selector | Trade Explainer | Recent signals as dropdown options |
+| AI Explanation Card | Trade Explainer | `{ action, ticker, time, strategy, why[], risk, confidence }` |
+| Trade History | Trade Explainer | `signals[]` with `.detail` field |
+| AI Market Summary | Market Summary | GPT-generated paragraph |
+| Stock Heatmap | Market Summary | Active tickers from signals |
+| Risk Alerts | Risk Alerts | `alerts[]`: `{ severity, time, title, message, recommendation }` |
+| AI Chat Panel | (floating) | Conversation history, GPT integration |
+
+---
+
+## Signal Type Codes
+
+| Code | Full Name | Description |
+| ---- | --------- | ----------- |
+| **LM** | Long Momentum | Enter long when momentum indicators signal upward trend |
+| **SM** | Short Momentum | Enter short when strong downward momentum detected |
+| **LR** | Long Reversion | Buy when price falls significantly below statistical range |
+| **SR** | Short Reversion | Sell when price moves excessively above equilibrium range |
+| **SL** | Stop-Loss | Exit triggered by stop-loss price hit |
+| **TP** | Take-Profit | Exit triggered by take-profit target reached |
+
+---
+
 ## Troubleshooting
 
 **Port 5000 already in use (macOS)**
