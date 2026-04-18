@@ -190,10 +190,10 @@ The strategy implements four entry mechanisms and two exit mechanisms:
 
 | Code   | Name            | Condition                                                         |
 | ------ | --------------- | ----------------------------------------------------------------- |
-| **LM** | Long Momentum   | `0 ≤ MACD_hist ≤ Z_mid` AND `price > BB_mid`                     |
-| **SM** | Short Momentum  | `−Z_mid ≤ MACD_hist < 0` AND `price < BB_mid`                    |
-| **LR** | Long Reversion  | `MACD_hist < −Z_extreme` AND `price < BB_lower`                   |
-| **SR** | Short Reversion | `MACD_hist > Z_extreme` AND `price > BB_upper`                    |
+| **LM** | Long Momentum   | `0 ≤ MAD MACD_hist ≤ Near Zero Band` AND `price > BB_mid`         |
+| **SM** | Short Momentum  | `−Near Zero Band ≤ MAD MACD_hist < 0` AND `price < BB_mid`        |
+| **LR** | Long Reversion  | `MAD MACD_hist < Negative Boundary` AND `price < BB_lower`        |
+| **SR** | Short Reversion | `MAD MACD_hist > Positive Boundary` AND `price > BB_upper`        |
 | **SL** | Stop-Loss       | Exit triggered when price hits ATR-scaled stop-loss level         |
 | **TP** | Take-Profit     | Exit triggered when price hits ATR-scaled take-profit target      |
 
