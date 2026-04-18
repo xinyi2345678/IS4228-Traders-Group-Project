@@ -198,7 +198,7 @@ The strategy implements four entry mechanisms and two exit mechanisms:
 | **TP** | Take-Profit     | Exit triggered when price hits ATR-scaled take-profit target      |
 
 Exits are ATR-scaled stop-loss / take-profit with optional trailing stops and a time-based exit.
-`Z_extreme` and `Z_mid` are dynamically scaled using **Robust MAD** of the MACD histogram.
+Positive/Negative and near-zero boundary are dynamically scaled using **Robust MAD** of the MACD histogram.
 
 **Universe:** AAPL, AMZN, META, GOOG, GOOGL, NVDA, MSFT, AVGO, TSLA, BRK-B
 **Benchmark:** SPY (buy-and-hold)
