@@ -59,11 +59,10 @@ python -m pip install flask flask-cors scipy scikit-learn ta openai python-doten
 
 ### 2. Set up environment variables
 
-Copy the `.env.example` file tp `.env` in the project root:
+Copy the `.env.example` file to `.env` in the project root:
 
 ```bash
 cp .env.example .env
-
 ```
 Alternatively, create a `.env` file in the project root:
 ```
@@ -73,6 +72,8 @@ VITE_OPENAI_MODEL='gpt-4o-mini'
 VITE_API_BASE_URL='http://localhost:5001/api'
 FRONTEND_ORIGIN='http://localhost:5173'
 ```
+
+Amend the OPEN_API key with your own key. For grading purposes, a key was sent in the comments section of the Canvas submission and graders may copy over to test the AI feature.
 
 > The AI features (trade explanations, market summary, chat) use **GPT-4o-mini** via the OpenAI API.
 > All other features (strategy, portfolio optimisation, metrics) work without an API key.
