@@ -59,10 +59,19 @@ python -m pip install flask flask-cors scipy scikit-learn ta openai python-doten
 
 ### 2. Set up environment variables
 
-Create a `.env` file in the project root:
+Copy the `.env.example` file tp `.env` in the project root:
+
+```bash
+cp .env.example .env
 
 ```
+Alternatively, create a `.env` file in the project root:
+```
 OPENAI_API='your-openai-api-key-here'
+OPENAI_MODEL='gpt-4o-mini'
+VITE_OPENAI_MODEL='gpt-4o-mini'
+VITE_API_BASE_URL='http://localhost:5001/api'
+FRONTEND_ORIGIN='http://localhost:5173'
 ```
 
 > The AI features (trade explanations, market summary, chat) use **GPT-4o-mini** via the OpenAI API.
