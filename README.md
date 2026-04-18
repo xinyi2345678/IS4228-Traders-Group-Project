@@ -59,11 +59,10 @@ python -m pip install flask flask-cors scipy scikit-learn ta openai python-doten
 
 ### 2. Set up environment variables
 
-Copy the `.env.example` file tp `.env` in the project root:
+Copy the `.env.example` file to `.env` in the project root:
 
 ```bash
 cp .env.example .env
-
 ```
 Alternatively, create a `.env` file in the project root:
 ```
